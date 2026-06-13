@@ -25,7 +25,6 @@ men (HIMBO). Highlights:
 
 - Per-NPC procedural bodies via SKEE morphs — no preset library needed. Deterministic
   within a playthrough (same NPC always looks the same).
-- Weight randomization applied before the body is built (no neck seams).
 - Realistic majority + tunable fantasy minority.
 - Body traits (independent per-NPC features) for both sexes.
 - Muscle tone: athletic women (visible definition) with a rare "snu snu" Amazon tier;
