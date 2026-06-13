@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+    <moduleName>OBodyNG Weight</moduleName>
+
+    <!-- Core files: always installed -->
+    <requiredInstallFiles>
+        <folder source="Core" destination="" priority="0"/>
+    </requiredInstallFiles>
+
+    <installSteps order="Explicit">
+        <installStep name="Default Preset">
+            <optionalFileGroups order="Explicit">
+                <group name="Starting Preset" type="SelectExactlyOne">
+                    <plugins order="Explicit">
+
+                        <plugin name="Balanced (Recommended)">
+                            <description>Calibrated to real BodySlide presets. ~15% of NPCs are exaggerated "fantasy" bodies, the rest realistic. Morph intensity 1.0x. You can change all of this in the MCM later.</description>
+                            <files>
+                                <folder source="Presets\Balanced" destination="" priority="1"/>
+                            </files>
+                            <typeDescriptor><type name="Recommended"/></typeDescriptor>
+                        </plugin>
+
+                        <plugin name="Realistic">
+                            <description>No fantasy bodies — everyone grounded and proportional. Slightly toned-down intensity (0.95x). Best for lore-friendly / immersive setups.</description>
+                            <files>
+                                <folder source="Presets\Realistic" destination="" priority="1"/>
+                            </files>
+                            <typeDescriptor><type name="Optional"/></typeDescriptor>
+                        </plugin>
+
+                        <plugin name="Fantasy">
+                            <description>More and bigger bombshells — 40% of NPCs are exaggerated, intensity 1.2x. For an over-the-top adult look.</description>
+                            <files>
+                                <folder source="Presets\Fantasy" destination="" priority="1"/>
+                            </files>
+                            <typeDescriptor><type name="Optional"/></typeDescriptor>
+                        </plugin>
+
+                    </plugins>
+                </group>
+            </optionalFileGroups>
+        </installStep>
+    </installSteps>
+</config>
