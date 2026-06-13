@@ -139,6 +139,15 @@ Event OnOptionKeyMapChange(int option, int keyCode, string conflictControl, stri
     if option == _keyOption
         OBW_Native.SetReRollKey(keyCode)
         SetKeyMapOptionValue(_keyOption, keyCode)
+        ; Robust path: re-register the key DIRECTLY on the handler quest. The old
+        ; ModEvent route could silently fail (OBW_Quest.OnPlayerLoadGame doesn't fire on
+        ; a Quest script, so its mod-event registration may be missing after a reload,
+        ; leaving the rebind with no listener). 0x800 = OBW_QuestRecord in the plugin.
+        OBW_Quest q = Game.GetFormFromFile(0x000800, "OBodyNGWeight.esp") as OBW_Quest
+        if q
+            q.BindReRollKey()
+        endif
+        ; Keep the ModEvent as a fallback for any setup where the form lookup fails.
         int h = ModEvent.Create("OBW_RebindKey")
         ModEvent.Send(h)
     endif

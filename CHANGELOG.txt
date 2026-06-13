@@ -1,3 +1,9 @@
+Version 1.2.1
+
+- Fix: the re-roll hotkey rebind (MCM) now takes effect immediately. Assigning a new key
+  re-registers it directly on the handler, so the new key works (and the old one stops)
+  right away, with no reload needed.
+
 Version 1.2.0
 
 - Seam-free: OBW no longer changes an NPC's real weight value (that caused neck seams and
