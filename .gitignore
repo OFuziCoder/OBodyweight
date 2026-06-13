@@ -7,6 +7,10 @@ plugin/out/
 *.user
 CMakeUserPresets.json
 
+# Local dev/build scripts (environment-specific paths; kept on disk, not in the repo)
+build.ps1
+make_esp.py
+
 # Temp / OS
 *.tmp
 Thumbs.db
