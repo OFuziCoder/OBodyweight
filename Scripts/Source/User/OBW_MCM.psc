@@ -3,6 +3,7 @@ Scriptname OBW_MCM extends SKI_ConfigBase
 int _modeOption     = -1
 int _bodyOption     = -1
 int _maleOption     = -1
+int _maleBuildOption = -1
 int _scaleOption    = -1
 int _fantasyOption  = -1
 int _unusualOption  = -1
@@ -42,6 +43,7 @@ Event OnPageReset(string page)
     AddHeaderOption("Body Shape")
     _bodyOption = AddMenuOption("Body shape", _bodyLabels[OBW_Native.GetBodyMode()])
     _maleOption = AddToggleOption("Male bodies", OBW_Native.GetMaleBodies())
+    _maleBuildOption = AddSliderOption("Male build", OBW_Native.GetMaleBuild(), "{2}x")
     _scaleOption = AddSliderOption("Morph intensity", OBW_Native.GetMorphScale(), "{2}x")
     _fantasyOption = AddSliderOption("Fantasy NPCs", OBW_Native.GetFantasyRatio() * 100.0, "{0}%")
     _unusualOption = AddSliderOption("Unusual bodies", OBW_Native.GetUnusualRatio() * 100.0, "{0}%")
@@ -99,6 +101,11 @@ Event OnOptionSliderOpen(int option)
         SetSliderDialogDefaultValue(0.0)
         SetSliderDialogRange(-50.0, 50.0)
         SetSliderDialogInterval(1.0)
+    elseif option == _maleBuildOption
+        SetSliderDialogStartValue(OBW_Native.GetMaleBuild())
+        SetSliderDialogDefaultValue(1.0)
+        SetSliderDialogRange(0.0, 2.0)
+        SetSliderDialogInterval(0.05)
     elseif option == _scaleOption
         SetSliderDialogStartValue(OBW_Native.GetMorphScale())
         SetSliderDialogDefaultValue(1.0)
@@ -141,6 +148,9 @@ Event OnOptionSliderAccept(int option, float value)
     if option == _biasOption
         OBW_Native.SetBias(value)
         SetSliderOptionValue(_biasOption, value, "{0}")
+    elseif option == _maleBuildOption
+        OBW_Native.SetMaleBuild(value)
+        SetSliderOptionValue(_maleBuildOption, value, "{2}x")
     elseif option == _scaleOption
         OBW_Native.SetMorphScale(value)
         SetSliderOptionValue(_scaleOption, value, "{2}x")
@@ -179,6 +189,8 @@ Event OnOptionHighlight(int option)
         SetInfoText("Procedural Morphs: generates body shape directly via SKEE — no BodySlide preset library needed.\nOBody Presets: OBody picks the body shape; this mod only randomizes weight.")
     elseif option == _maleOption
         SetInfoText("Master switch for male NPCs. ON: men get procedural HIMBO bodies + weight, like women. OFF: OBW ignores men entirely (no weight, no morphs) — OBody or vanilla handle them. Applies to newly generated/re-rolled NPCs.")
+    elseif option == _maleBuildOption
+        SetInfoText("Scales the overall male build (muscle + mass). 1.0 = default. Lower for slimmer men, higher for beefier. All body parts scale together, so proportions stay intact. Applies to newly generated/re-rolled NPCs.")
     elseif option == _scaleOption
         SetInfoText("Master multiplier for procedural morph intensity. 1.0 = calibrated to real BodySlide presets. Affects both realistic and fantasy NPCs. Applies to newly generated/re-rolled NPCs.")
     elseif option == _fantasyOption

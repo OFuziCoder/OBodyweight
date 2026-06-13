@@ -1,3 +1,16 @@
+Version 1.2.0
+
+- Seam-free: OBW no longer changes an NPC's real weight value (that caused neck seams and
+  body-vs-outfit weight mismatches in some setups). All body-size variety now comes from
+  morphs, so head, body and outfit always match. The face keeps the NPC's editor weight.
+- VR support: the re-roll hotkey now works in VR — it targets the NPC you're gazing at (an
+  HMD cone-cast), falling back to yourself when nothing is in view. Desktop is unchanged
+  (normal crosshair); the cone-cast only runs in VR.
+- Male body tuning: tamed muscle/mass so men aren't over-built, plus a proportionality
+  binding so every part scales together (no big arms on a thin chest).
+- Male build slider (MCM): scale overall male corpulence (0-2x), proportions preserved.
+- Performance: fewer body rebuilds per NPC — lighter on RaceMenu/SKEE overlay reprocessing.
+
 Version 1.1.0
 
 - Male bodies on/off master toggle — turn the whole male-body feature off and OBody /

@@ -1,7 +1,6 @@
 #include <SKSE/SKSE.h>
 #include <RE/Skyrim.h>
 #include "WeightManager.hpp"
-#include "ActorLoadHook.hpp"
 #include "Config.hpp"
 
 namespace OBW::PapyrusBindings { bool Register(RE::BSScript::IVirtualMachine*); }
@@ -37,18 +36,10 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
         serial->SetRevertCallback(OBW::WeightManager::RevertCallback);
     }
 
-    // Cell-attach hook: register only after data is loaded — the event source
-    // holder isn't reliably ready at plugin-load time.
-    auto* messaging = SKSE::GetMessagingInterface();
-    if (messaging) {
-        messaging->RegisterListener([](SKSE::MessagingInterface::Message* a_msg) {
-            if (a_msg && a_msg->type == SKSE::MessagingInterface::kDataLoaded) {
-                RE::ScriptEventSourceHolder::GetSingleton()
-                    ->AddEventSink(OBW::CellAttachHandler::GetSingleton());
-                SKSE::log::info("OBW: cell-attach sink registered (kDataLoaded)");
-            }
-        });
-    }
+    // NOTE: OBW no longer changes the actor's real weight (base->weight). Changing it
+    // caused neck seams (the baked head facegen is at the editor weight and can't follow)
+    // and outfit/body weight mismatches. Body size now comes purely from morphs. The
+    // per-NPC weight value is kept as a "mock weight" that drives those morphs.
 
     SKSE::log::info("OBodyNGWeight loaded");
     return true;

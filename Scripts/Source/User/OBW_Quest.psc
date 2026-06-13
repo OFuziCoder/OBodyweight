@@ -36,7 +36,18 @@ Event OnKeyDown(int keyCode)
     if OBW_Native.GetBodyMode() != 0
         return
     endif
-    Actor a = Game.GetCurrentCrosshairRef() as Actor
+    ; Pick the target: VR has no crosshair (GetCurrentCrosshairRef is None), so there we
+    ; cone-cast from the HMD gaze in C++; desktop uses the normal crosshair (the cone-cast
+    ; never runs there). Either way, fall back to the player if nothing is targeted.
+    Actor a
+    if OBW_Native.IsVR()
+        a = OBW_Native.GetVRLookTarget()
+    else
+        a = Game.GetCurrentCrosshairRef() as Actor
+    endif
+    if !a
+        a = Game.GetPlayer()
+    endif
     if !a
         return
     endif
@@ -114,18 +125,23 @@ Function ApplyMorphs(Actor akActor)
         ApplyMaleMorphs(akActor)
     endif
 
-    OBW_Native.MarkMorphsApplied(akActor)
-    NiOverride.UpdateModelWeight(akActor)
-
-    ; Refit equipped clothing. SKEE applies body morphs at EQUIP time, so to make
-    ; already-worn armor follow the new shape we re-equip the body-slot item —
-    ; the same trick OBody uses (OBodyNGScript.psc:197-209). Slot 0x04 = body (32).
+    ; Apply the new shape with the FEWEST body rebuilds — each rebuild makes SKEE
+    ; reprocess EVERY overlay, which is heavy with large overlay counts.
     Form bodyArmor = akActor.GetWornForm(0x00000004)
     if bodyArmor
-        OBW_Native.MarkMorphsApplied(akActor)   ; cover any equip-triggered re-fire
+        ; Clothed (2 rebuilds): re-equip the body-slot armor. The UNEQUIP rebuilds the
+        ; (briefly visible) body with the persisted morphs, and the EQUIP applies them to
+        ; the armor (OBody's trick — morphs apply at equip time). A separate
+        ; UpdateModelWeight would be a redundant 3rd rebuild, so it's skipped here.
+        OBW_Native.MarkMorphsApplied(akActor)   ; suppress unequip-triggered re-fire
         akActor.UnequipItem(bodyArmor, false, true)
         Utility.Wait(0.05)
+        OBW_Native.MarkMorphsApplied(akActor)   ; suppress equip-triggered re-fire
         akActor.EquipItem(bodyArmor, false, true)
+    else
+        ; Nude (1 rebuild): nothing to re-equip — update the body directly.
+        OBW_Native.MarkMorphsApplied(akActor)
+        NiOverride.UpdateModelWeight(akActor)
     endif
 EndFunction
 

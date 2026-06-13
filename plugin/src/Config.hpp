@@ -14,6 +14,8 @@ inline int   g_defaultReRollKey          = 26;  // [ / { key
 // Male bodies: when false, OBW leaves male NPCs entirely alone (no weight, no morphs) —
 // OBody / vanilla handle them. Toggleable in the MCM.
 inline bool  g_defaultMaleBodies         = true;
+// Male build multiplier (1.0 = default). Scales the whole male body uniformly.
+inline float g_defaultMaleBuild          = 1.0f;
 
 // Parse the INI. Call once in SKSEPluginLoad, before WeightManager is constructed.
 void Load();

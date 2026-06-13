@@ -17,6 +17,7 @@ WeightManager::WeightManager() {
     _breastUnusualRatio = Config::g_defaultBreastUnusualRatio;
     _athleticRatio = Config::g_defaultAthleticRatio;
     _maleBodies = Config::g_defaultMaleBodies;
+    _maleBuild = Config::g_defaultMaleBuild;
     _reRollKey = Config::g_defaultReRollKey;
 }
 
@@ -52,18 +53,6 @@ float WeightManager::GenerateWeight(RE::Actor* a_actor) {
     }
 
     return std::clamp(raw + _bias, 0.0f, 100.0f);
-}
-
-void WeightManager::ApplyWeight(RE::Actor* a_actor, float a_weight) {
-    if (!a_actor) return;
-    auto* base = a_actor->GetActorBase();
-    if (!base) return;
-    base->weight = a_weight;
-    // DoReset3D intentionally omitted: it clears OBody's "obody_processed" NiOverride
-    // morph, causing OBody to re-fire OnActorGenerated → infinite loop + lag.
-    // The weight field is persisted on the ActorBase; SKEE picks it up when
-    // applying morphs, and the vanilla mesh blend updates on the next natural 3D refresh.
-    SKSE::log::debug("OBW: weight {:.1f} set on {:#010x}", a_weight, a_actor->GetFormID());
 }
 
 // ---------------------------------------------------------------------------
@@ -418,23 +407,23 @@ float WeightManager::GetActorIntensity(RE::Actor* a_actor) {
 
 namespace {
 
-// Muscle level 0-100: bimodal. Ceiling kept moderate — HIMBO sliders distort past
-// ~1.0, so even the buff band tops out around 78 (×intensity stays sane).
+// Muscle level 0-100: bimodal, kept LOW — HIMBO sliders distort past ~1.0, so the buff
+// band tops out around 55 (× intensity / 100 stays well under the distortion threshold).
 float MaleMuscle(std::uint32_t seed) {
     std::mt19937 rng{ seed ^ 0x4D5C1E00u };
     const float r = std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
-    if (r < 0.40f) return std::uniform_real_distribution<float>(0.0f, 22.0f)(rng);
-    if (r < 0.70f) return std::uniform_real_distribution<float>(22.0f, 45.0f)(rng);
-    return std::uniform_real_distribution<float>(45.0f, 68.0f)(rng);
+    if (r < 0.45f) return std::uniform_real_distribution<float>(0.0f, 16.0f)(rng);
+    if (r < 0.75f) return std::uniform_real_distribution<float>(16.0f, 36.0f)(rng);
+    return std::uniform_real_distribution<float>(36.0f, 55.0f)(rng);
 }
 
 // Fat level 0-100: skewed low. Ceiling tamed so chunky bodies don't blow out.
 float MaleFat(std::uint32_t seed) {
     std::mt19937 rng{ seed ^ 0x7A700000u };
     const float r = std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
-    if (r < 0.60f) return std::uniform_real_distribution<float>(0.0f, 20.0f)(rng);
-    if (r < 0.85f) return std::uniform_real_distribution<float>(20.0f, 40.0f)(rng);
-    return std::uniform_real_distribution<float>(40.0f, 60.0f)(rng);
+    if (r < 0.62f) return std::uniform_real_distribution<float>(0.0f, 16.0f)(rng);
+    if (r < 0.86f) return std::uniform_real_distribution<float>(16.0f, 30.0f)(rng);
+    return std::uniform_real_distribution<float>(30.0f, 48.0f)(rng);
 }
 
 // HIMBO sliders derived from muscle (M) and fat (F). Lowercase keys (Papyrus lowercases).
@@ -481,9 +470,9 @@ float WeightManager::GetMaleMorphValue(RE::Actor* a_actor, std::string_view morp
     } else if (uv == 1) {                   // ultra-huge: big muscle OR big fat (tamed)
         std::mt19937 r{ seedBase ^ 0x0DDFE201u };
         if (std::uniform_real_distribution<float>(0.0f, 1.0f)(r) < 0.5f)
-            M = std::uniform_real_distribution<float>(60.0f, 76.0f)(r);
+            M = std::uniform_real_distribution<float>(50.0f, 64.0f)(r);
         else
-            F = std::uniform_real_distribution<float>(48.0f, 65.0f)(r);
+            F = std::uniform_real_distribution<float>(42.0f, 54.0f)(r);
     }
 
     float val = MaleSlider(key, M, F);
@@ -491,11 +480,19 @@ float WeightManager::GetMaleMorphValue(RE::Actor* a_actor, std::string_view morp
     // Traits — suppressed on unusual bodies (they replace the trait set, like females).
     if (uv < 0) val += MaleTraitDelta(seedBase, key);
 
-    // Per-part variation; boosted for unusual → disproportionate/atypical male body.
+    // Proportionality "amarra": ONE per-NPC build scale (multiplicative → every part
+    // scales together, staying proportional) + a tiny per-part jitter. This replaces the
+    // old large INDEPENDENT per-part noise that decorrelated the body (e.g. big arms on a
+    // thin chest). All parts already derive from the same M/F, so this keeps them tied.
+    std::mt19937 br{ seedBase ^ 0x0B01D000u };
+    const float buildScale = std::uniform_real_distribution<float>(0.92f, 1.08f)(br);
     const auto h = static_cast<std::uint32_t>(std::hash<std::string>{}(key));
     std::mt19937 nr{ seedBase ^ h ^ 0x0A1Eu };
-    const float amp = (uv >= 0) ? 16.0f : 6.0f;
-    val += std::uniform_real_distribution<float>(-amp, amp)(nr);
+    val = val * buildScale + std::uniform_real_distribution<float>(-4.0f, 4.0f)(nr);
+
+    // Player-tunable male build (MCM "Male build"): scales the whole male body uniformly,
+    // so proportions are preserved at any setting.
+    val *= _maleBuild;
 
     return std::clamp(val, 0.0f, 100.0f);
 }
@@ -507,15 +504,15 @@ float WeightManager::GetMaleIntensity(RE::Actor* a_actor) {
     const RE::FormID id = a_actor->GetFormID();
     std::mt19937 rng{ GetActorSeed(id) ^ 0x4A1E0000u };
 
-    // Multipliers kept low — HIMBO volume distorts above ~1.1 (much tighter than CBBE).
+    // Multipliers kept LOW — HIMBO volume distorts above ~1.0 (much tighter than CBBE).
     const int uv = MaleUnusualVariant(id);
-    if (uv == 1) return std::uniform_real_distribution<float>(1.18f, 1.40f)(rng) * _morphScale; // ultra-huge
-    if (uv == 0) return std::uniform_real_distribution<float>(0.68f, 0.88f)(rng) * _morphScale; // ultra-skinny
+    if (uv == 1) return std::uniform_real_distribution<float>(1.08f, 1.25f)(rng) * _morphScale; // ultra-huge
+    if (uv == 0) return std::uniform_real_distribution<float>(0.65f, 0.85f)(rng) * _morphScale; // ultra-skinny
 
     const float roll = std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
     float intensity = (roll < _fantasyRatio)
-        ? std::uniform_real_distribution<float>(1.05f, 1.28f)(rng)  // fantasy: bodybuilder
-        : std::uniform_real_distribution<float>(0.82f, 1.05f)(rng);
+        ? std::uniform_real_distribution<float>(0.98f, 1.15f)(rng)  // fantasy: bodybuilder
+        : std::uniform_real_distribution<float>(0.72f, 0.92f)(rng);
     return intensity * _morphScale;
 }
 
@@ -634,6 +631,10 @@ void WeightManager::Save(SKSE::SerializationInterface* a_intf) {
     if (a_intf->OpenRecord(kRecordMale, kRecordVer))
         a_intf->WriteRecordData(_maleBodies);
 
+    // Male build multiplier
+    if (a_intf->OpenRecord(kRecordMBld, kRecordVer))
+        a_intf->WriteRecordData(_maleBuild);
+
     // Per-actor override seeds (hotkey re-rolls) — count followed by id/seed pairs.
     if (a_intf->OpenRecord(kRecordOvr, kRecordVer)) {
         const std::uint32_t count = static_cast<std::uint32_t>(_overrideSeed.size());
@@ -674,6 +675,8 @@ void WeightManager::Load(SKSE::SerializationInterface* a_intf) {
             a_intf->ReadRecordData(_reRollKey);
         } else if (type == kRecordMale) {
             a_intf->ReadRecordData(_maleBodies);
+        } else if (type == kRecordMBld) {
+            a_intf->ReadRecordData(_maleBuild);
         } else if (type == kRecordOvr) {
             std::uint32_t count{};
             a_intf->ReadRecordData(count);
@@ -714,6 +717,7 @@ void WeightManager::Revert() {
     _breastUnusualRatio = Config::g_defaultBreastUnusualRatio;
     _athleticRatio = Config::g_defaultAthleticRatio;
     _maleBodies   = Config::g_defaultMaleBodies;
+    _maleBuild    = Config::g_defaultMaleBuild;
     _reRollKey = Config::g_defaultReRollKey;
     _seed         = OBW::CollectEntropy();
     _overrideSeed.clear();

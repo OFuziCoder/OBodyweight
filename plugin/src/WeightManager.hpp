@@ -23,11 +23,10 @@ class WeightManager {
 public:
     static WeightManager& GetSingleton() noexcept;
 
-    // Generate weight (0-100) for the actor according to the configured mode.
+    // Generate the per-NPC "mock weight" (0-100) according to the configured mode. This
+    // value drives the body-size morphs; it is NOT written to the actor's real weight
+    // (that would cause neck seams + outfit mismatches — see main.cpp).
     float GenerateWeight(RE::Actor* a_actor);
-
-    // Apply weight to the actor's ActorBase (affects all instances of the same base).
-    static void ApplyWeight(RE::Actor* a_actor, float a_weight);
 
     // Procedural morph generation — no preset files required.
     // GetFrameScore: one call per actor; returns 0-100, bimodal (pushed toward extremes).
@@ -75,6 +74,10 @@ public:
     // ignores male NPCs completely. MCM-toggleable, persisted in the cosave.
     bool          GetMaleBodies() const noexcept { return _maleBodies; }
     void          SetMaleBodies(bool b)          { _maleBodies = b; }
+    // Player-tunable male build multiplier (1.0 = default). Scales the whole male body
+    // uniformly, so proportions hold at any value. MCM "Male build".
+    float         GetMaleBuild() const noexcept { return _maleBuild; }
+    void          SetMaleBuild(float b)         { _maleBuild = b; }
 
     // Female muscle-tone score 0-100 (athletic roll + snu snu, belly-suppressed) — the
     // same value that drives the muscle morph sliders. Exposed for other mods' classifier.
@@ -163,6 +166,7 @@ private:
     float         _breastUnusualRatio{ 0.06f };
     float         _athleticRatio{ 0.15f };
     bool          _maleBodies{ true };     // process male NPCs at all (weight + morphs)
+    float         _maleBuild{ 1.0f };      // player-tunable male build multiplier
     std::int32_t  _reRollKey{ 26 };  // [ / { key
     std::uint32_t _seed{ 0 };
     mutable std::recursive_mutex                  _mutex;  // guards the containers below
@@ -186,6 +190,7 @@ private:
     static constexpr std::uint32_t kRecordAth  = 'ATHL';
     static constexpr std::uint32_t kRecordKey  = 'RKEY';
     static constexpr std::uint32_t kRecordMale = 'MALE';
+    static constexpr std::uint32_t kRecordMBld = 'MBLD';
     static constexpr std::uint32_t kRecordVer  = 1;
 };
 

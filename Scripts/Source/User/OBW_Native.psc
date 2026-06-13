@@ -1,10 +1,8 @@
 Scriptname OBW_Native Hidden
 
-; Returns the weight that would be generated for the actor (0-100), without applying it.
+; Returns the per-NPC "mock weight" (0-100) — drives the body-size morphs, never written
+; to the actor's real weight.
 float Function GetWeight(Actor akActor) global native
-
-; Applies the generated weight to the actor's ActorBase and refreshes the 3D geometry.
-Function ApplyGeneratedWeight(Actor akActor) global native
 
 ; Distribution mode: 0=Random, 1=Seeded/Deterministic, 2=NpcDefault
 int Function GetMode() global native
@@ -57,6 +55,10 @@ Function SetReRollKey(int aiKey) global native
 bool Function GetMaleBodies() global native
 Function SetMaleBodies(bool abOn) global native
 
+; Male build multiplier (1.0 = default). Scales the whole male body uniformly.
+float Function GetMaleBuild() global native
+Function SetMaleBuild(float afValue) global native
+
 ; Effective per-NPC intensity: realistic (~1.0) or fantasy (~1.3-2.2) x the global scale.
 ; Call ONCE per NPC and apply it to every slider.
 float Function GetActorIntensity(Actor akActor) global native
@@ -74,6 +76,12 @@ float Function GetMaleIntensity(Actor akActor) global native
 
 ; Muscle tone 0-100 (same value that drives the MuscleAbs/Arms/Legs sliders).
 int Function GetToneScore(Actor akActor) global native
+
+; True only on the Skyrim VR runtime.
+bool Function IsVR() global native
+; VR-only: the actor the player is gazing at (cone-cast from the HMD), or None. Always
+; None in desktop play, so the cone-cast never runs there.
+Actor Function GetVRLookTarget() global native
 
 ; Regenerates weight and morphs for a specific actor (used by the re-roll hotkey).
 ; Removes it from the processed set, re-rolls the weight, and queues it for morphs.

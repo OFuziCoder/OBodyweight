@@ -32,9 +32,10 @@ void Load() {
     g_defaultAthleticRatio      = std::clamp(ReadFloat("Defaults", "AthleticRatio", 0.15f), 0.0f, 1.0f);
     g_defaultReRollKey          = static_cast<int>(ReadFloat("Defaults", "ReRollKey", 26.0f));
     g_defaultMaleBodies         = GetPrivateProfileIntA("Defaults", "MaleBodies", 1, kIniPath) != 0;
-    SKSE::log::info("Config: MorphScale={:.2f}, Fantasy={:.2f}, Unusual={:.2f}, BreastUnusual={:.2f}, Athletic={:.2f}, MaleBodies={}",
+    g_defaultMaleBuild          = std::clamp(ReadFloat("Defaults", "MaleBuild", 1.0f), 0.0f, 2.0f);
+    SKSE::log::info("Config: MorphScale={:.2f}, Fantasy={:.2f}, Unusual={:.2f}, BreastUnusual={:.2f}, Athletic={:.2f}, MaleBodies={}, MaleBuild={:.2f}",
                     g_defaultMorphScale, g_defaultFantasyRatio, g_defaultUnusualRatio,
-                    g_defaultBreastUnusualRatio, g_defaultAthleticRatio, g_defaultMaleBodies);
+                    g_defaultBreastUnusualRatio, g_defaultAthleticRatio, g_defaultMaleBodies, g_defaultMaleBuild);
 }
 
 }  // namespace OBW::Config
