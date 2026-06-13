@@ -1,0 +1,19 @@
+# Normalize line endings; keep binaries untouched.
+* text=auto
+
+*.cpp   text
+*.hpp   text
+*.h     text
+*.psc   text
+*.md    text
+*.txt   text
+*.ps1   text
+*.py    text
+*.json  text
+*.ini   text
+
+*.pex   binary
+*.dll   binary
+*.esp   binary
+*.bsa   binary
+*.dds   binary
