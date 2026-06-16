@@ -1,0 +1,34 @@
+[Settings]
+UniqueName = OBW
+
+# OBW per-body bounce. OBW calls ApplyBounceInterpolation(actor,"OBW",percent) with a percent from
+# the archetype. CBPC's bounce interpolation honours ONLY amplitude (the motion-range multiplier);
+# stiffness/damping (the spring firmness) are NOT interpolatable -> set those globally in
+# CBPConfig_zzOBW_BreastFirm.txt. Format: Alias.amplitude <value@0%> <value@100%>. percent ~32 ~= 1.0.
+
+# --- Breasts (range kept low; firmness comes from the global stiffness/damping override) ---
+Breast.amplitude 0.55 1.10
+LBreast.amplitude 0.55 1.10
+RBreast.amplitude 0.55 1.10
+ExtraBreast1L.amplitude 0.55 1.10
+ExtraBreast2L.amplitude 0.55 1.10
+ExtraBreast3L.amplitude 0.55 1.10
+ExtraBreast1R.amplitude 0.55 1.10
+ExtraBreast2R.amplitude 0.55 1.10
+ExtraBreast3R.amplitude 0.55 1.10
+
+# --- Butt (a touch more swing) ---
+Butt.amplitude 0.85 1.85
+LButt.amplitude 0.85 1.85
+RButt.amplitude 0.85 1.85
+
+# --- Belly ---
+Belly.amplitude 0.78 1.45
+
+# --- Legs (thighs/calves) - subtler ---
+LFrontThigh.amplitude 0.82 1.35
+RFrontThigh.amplitude 0.82 1.35
+LRearThigh.amplitude 0.82 1.35
+RRearThigh.amplitude 0.82 1.35
+LRearCalf.amplitude 0.82 1.30
+RRearCalf.amplitude 0.82 1.30

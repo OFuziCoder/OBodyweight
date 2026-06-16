@@ -10,6 +10,7 @@ int _unusualOption  = -1
 int _bUnusualOption = -1
 int _athleticOption = -1
 int _keyOption      = -1
+int _reprocessOption = -1
 int _biasOption     = -1
 int _seedOption     = -1
 int _reseedOption   = -1
@@ -65,6 +66,9 @@ Event OnPageReset(string page)
     int curSeed = OBW_Native.GetSeed()
     _seedOption   = AddTextOption("Current seed", curSeed as string, seedDisabled)
     _reseedOption = AddTextOption("Generate new seed", "[ Click ]", seedDisabled)
+
+    AddHeaderOption("Apply")
+    _reprocessOption = AddTextOption("Reprocess all loaded NPCs", "[ Click ]")
 EndEvent
 
 Event OnOptionMenuOpen(int option)
@@ -188,6 +192,8 @@ Event OnOptionSelect(int option)
         bool newVal = !OBW_Native.GetMaleBodies()
         OBW_Native.SetMaleBodies(newVal)
         SetToggleOptionValue(_maleOption, newVal)
+    elseif option == _reprocessOption
+        SendModEvent("OBW_Reprocess")   ; OBW_Quest re-queues all loaded NPCs + arms the drain
     endif
 EndEvent
 

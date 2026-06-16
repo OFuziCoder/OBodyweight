@@ -9,13 +9,23 @@ int _reRollKey = 26   ; [ / { — overwritten from the plugin on init/load
 Event OnInit()
     OBodyNative.RegisterForOBodyEvent(self as Quest)
     RegisterForModEvent("OBW_RebindKey", "OnRebindKey")
+    RegisterForModEvent("OBW_Reprocess", "OnReprocess")
     BindReRollKey()
 EndEvent
 
 Event OnPlayerLoadGame()
     OBodyNative.RegisterForOBodyEvent(self as Quest)
     RegisterForModEvent("OBW_RebindKey", "OnRebindKey")
+    RegisterForModEvent("OBW_Reprocess", "OnReprocess")
     BindReRollKey()
+EndEvent
+
+; Fired by the MCM "Reprocess all loaded NPCs" button: re-queue every loaded NPC and arm the drain,
+; so the current generation logic + CBPC physics re-apply without cell reloads.
+Event OnReprocess(string asEvent, string asStr, float afNum, Form akSender)
+    int n = OBW_Native.ReprocessAllLoaded()
+    Debug.Notification("OBodyNG Weight: reprocessing " + n + " loaded NPC(s)...")
+    RegisterForSingleUpdate(0.3)
 EndEvent
 
 Function BindReRollKey()
@@ -143,31 +153,50 @@ Function ApplyMorphs(Actor akActor)
         OBW_Native.MarkMorphsApplied(akActor)
         NiOverride.UpdateModelWeight(akActor)
     endif
+
+    ; CBPC physics preset by archetype tier (soft dep — no-op without CBPC).
+    if isFemale
+        ApplyPhysicsTier(akActor)
+    endif
+EndFunction
+
+; Per-body physics WITHOUT replacing the user's config: CBPC's ApplyBounceInterpolation scales the
+; AMPLITUDE of the actor's EXISTING physics by a percentage (config UniqueName="OBW"). The percent
+; comes from the archetype tier (firmer -> lower amplitude, jigglier -> higher). percent ~32 is the
+; neutral point (amplitude ~1.0 = unchanged). No-op without CBPC; can't disable physics (additive).
+Function ApplyPhysicsTier(Actor akActor)
+    if !OBW_Native.HasCBPC()
+        return
+    endif
+    ; Continuous, body-correlated: bounce follows size + softness, collision follows size.
+    ; (Within one archetype a bigger body now jiggles more; muscle firms; fat softens.)
+    CBPCPluginScript.ApplyBounceInterpolation(akActor, "OBW", OBW_Native.GetPhysicsPercent(akActor, 0))
+    CBPCPluginScript.ApplyCollisionInterpolation(akActor, "OBW", OBW_Native.GetPhysicsPercent(akActor, 1))
 EndFunction
 
 Function ApplyFemaleMorphs(Actor akActor)
     ; SKEE body morphs are 0.0-1.0 (1.0 = 100% of the BodySlide slider).
     ; GetMorphValue returns 0-100; divide by 100 and apply the global intensity scale.
     float T = OBW_Native.GetFrameScore(akActor)
-    ; Volume sliders: per-NPC intensity (realistic vs fantasy), includes global scale.
-    float kVol = OBW_Native.GetActorIntensity(akActor) / 100.0
-    ; Definition/trait sliders: master scale only — never the fantasy 2.2x blow-up,
-    ; so shape traits (waist, sag, hip dips...) stay anatomically plausible.
+    ; Volume sliders use GetVolumeMorph: intensity (realistic vs fantasy) is baked in and the
+    ; result is soft-capped to the sculpted vertex range, so big bodies never spike/break.
+    ; Definition/trait sliders: master scale only — never the fantasy blow-up, so shape traits
+    ; (waist, sag, hip dips...) stay anatomically plausible (always <= 1.0).
     float kDef = OBW_Native.GetMorphScale() / 100.0
 
-    ; --- Volume (frame score + traits, amplified for fantasy NPCs) ---
-    NiOverride.SetBodyMorph(akActor, "Breasts", "OBW", OBW_Native.GetMorphValue(akActor, T, "Breasts") * kVol)
-    NiOverride.SetBodyMorph(akActor, "Butt",    "OBW", OBW_Native.GetMorphValue(akActor, T, "Butt")    * kVol)
-    NiOverride.SetBodyMorph(akActor, "Belly",   "OBW", OBW_Native.GetMorphValue(akActor, T, "Belly")   * kVol)
-    NiOverride.SetBodyMorph(akActor, "Hips",    "OBW", OBW_Native.GetMorphValue(akActor, T, "Hips")    * kVol)
-    NiOverride.SetBodyMorph(akActor, "Thighs",  "OBW", OBW_Native.GetMorphValue(akActor, T, "Thighs")  * kVol)
-    NiOverride.SetBodyMorph(akActor, "BigButt", "OBW", OBW_Native.GetMorphValue(akActor, T, "BigButt") * kVol)
+    ; --- Volume (frame score + traits, amplified for fantasy NPCs, soft-capped) ---
+    NiOverride.SetBodyMorph(akActor, "Breasts", "OBW", OBW_Native.GetVolumeMorph(akActor, T, "Breasts"))
+    NiOverride.SetBodyMorph(akActor, "Butt",    "OBW", OBW_Native.GetVolumeMorph(akActor, T, "Butt"))
+    NiOverride.SetBodyMorph(akActor, "Belly",   "OBW", OBW_Native.GetVolumeMorph(akActor, T, "Belly"))
+    NiOverride.SetBodyMorph(akActor, "Hips",    "OBW", OBW_Native.GetVolumeMorph(akActor, T, "Hips"))
+    NiOverride.SetBodyMorph(akActor, "Thighs",  "OBW", OBW_Native.GetVolumeMorph(akActor, T, "Thighs"))
+    NiOverride.SetBodyMorph(akActor, "BigButt", "OBW", OBW_Native.GetVolumeMorph(akActor, T, "BigButt"))
 
-    ; --- Arms: track body fullness at a reduced ratio (match the body, natural taper) ---
-    NiOverride.SetBodyMorph(akActor, "Arms",        "OBW", OBW_Native.GetMorphValue(akActor, T, "Arms")        * kVol)
-    NiOverride.SetBodyMorph(akActor, "ForearmSize", "OBW", OBW_Native.GetMorphValue(akActor, T, "ForearmSize") * kVol)
-    NiOverride.SetBodyMorph(akActor, "WristSize",   "OBW", OBW_Native.GetMorphValue(akActor, T, "WristSize")   * kVol)
-    NiOverride.SetBodyMorph(akActor, "ChubbyArms",  "OBW", OBW_Native.GetMorphValue(akActor, T, "ChubbyArms")  * kVol)
+    ; --- Arms: forearm/wrist are derived from the upper arm (guaranteed smooth taper) ---
+    NiOverride.SetBodyMorph(akActor, "Arms",        "OBW", OBW_Native.GetVolumeMorph(akActor, T, "Arms"))
+    NiOverride.SetBodyMorph(akActor, "ForearmSize", "OBW", OBW_Native.GetVolumeMorph(akActor, T, "ForearmSize"))
+    NiOverride.SetBodyMorph(akActor, "WristSize",   "OBW", OBW_Native.GetVolumeMorph(akActor, T, "WristSize"))
+    NiOverride.SetBodyMorph(akActor, "ChubbyArms",  "OBW", OBW_Native.GetVolumeMorph(akActor, T, "ChubbyArms"))
 
     ; --- Definition / shape traits (master scale only) ---
     NiOverride.SetBodyMorph(akActor, "Waist",               "OBW", OBW_Native.GetMorphValue(akActor, T, "Waist")               * kDef)

@@ -1,6 +1,7 @@
 #include "WeightManager.hpp"
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
+#include <Windows.h>   // GetModuleHandleA (CBPC detection)
 
 namespace OBW::PapyrusBindings {
 
@@ -114,6 +115,31 @@ float GetActorIntensity(RE::StaticFunctionTag*, RE::Actor* a_actor) {
     return WeightManager::GetSingleton().GetActorIntensity(a_actor);
 }
 
+std::int32_t GetPhysicsTier(RE::StaticFunctionTag*, RE::Actor* a_actor) {
+    return WeightManager::GetSingleton().GetPhysicsTier(a_actor);
+}
+
+std::int32_t GetPhysicsPercent(RE::StaticFunctionTag*, RE::Actor* a_actor, std::int32_t a_kind) {
+    return WeightManager::GetSingleton().GetPhysicsPercent(a_actor, a_kind);
+}
+
+std::int32_t GetArchetypeId(RE::StaticFunctionTag*, RE::Actor* a_actor) {
+    return WeightManager::GetSingleton().GetArchetypeId(a_actor);
+}
+
+RE::BSFixedString GetArchetypeName(RE::StaticFunctionTag*, RE::Actor* a_actor) {
+    return WeightManager::GetSingleton().GetArchetypeName(a_actor);
+}
+
+// CBPC ships cbp.dll — if it's loaded, the physics integration is safe to use.
+bool HasCBPC(RE::StaticFunctionTag*) {
+    return GetModuleHandleA("cbp.dll") != nullptr;
+}
+
+std::int32_t ReprocessAllLoaded(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().ReprocessAllLoaded();
+}
+
 void QueueForMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor) {
     WeightManager::GetSingleton().QueueForMorphs(a_actor);
 }
@@ -133,6 +159,11 @@ float GetFrameScore(RE::StaticFunctionTag*, RE::Actor* a_actor) {
 float GetMorphValue(RE::StaticFunctionTag*, RE::Actor* a_actor, float a_frameScore, RE::BSFixedString a_name) {
     const char* raw = a_name.c_str();
     return WeightManager::GetSingleton().GetMorphValue(a_actor, a_frameScore, raw ? raw : "");
+}
+
+float GetVolumeMorph(RE::StaticFunctionTag*, RE::Actor* a_actor, float a_frameScore, RE::BSFixedString a_name) {
+    const char* raw = a_name.c_str();
+    return WeightManager::GetSingleton().GetVolumeMorph(a_actor, a_frameScore, raw ? raw : "");
 }
 
 float GetMaleMorphValue(RE::StaticFunctionTag*, RE::Actor* a_actor, RE::BSFixedString a_name) {
@@ -220,10 +251,12 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("GetSeed",             kScript, GetSeed);
     a_vm->RegisterFunction("RegenerateSeed",      kScript, RegenerateSeed);
     a_vm->RegisterFunction("QueueForMorphs",      kScript, QueueForMorphs);
+    a_vm->RegisterFunction("ReprocessAllLoaded",  kScript, ReprocessAllLoaded);
     a_vm->RegisterFunction("GetNextMorphActor",   kScript, GetNextMorphActor);
     a_vm->RegisterFunction("HasMorphsPending",    kScript, HasMorphsPending);
     a_vm->RegisterFunction("GetBodyMode",         kScript, GetBodyMode);
     a_vm->RegisterFunction("SetBodyMode",         kScript, SetBodyMode);
+    a_vm->RegisterFunction("GetVolumeMorph",      kScript, GetVolumeMorph);
     a_vm->RegisterFunction("GetMorphScale",       kScript, GetMorphScale);
     a_vm->RegisterFunction("SetMorphScale",       kScript, SetMorphScale);
     a_vm->RegisterFunction("GetFantasyRatio",     kScript, GetFantasyRatio);
@@ -241,6 +274,11 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("GetMaleBuild",        kScript, GetMaleBuild);
     a_vm->RegisterFunction("SetMaleBuild",        kScript, SetMaleBuild);
     a_vm->RegisterFunction("GetActorIntensity",   kScript, GetActorIntensity);
+    a_vm->RegisterFunction("GetPhysicsTier",      kScript, GetPhysicsTier);
+    a_vm->RegisterFunction("GetPhysicsPercent",   kScript, GetPhysicsPercent);
+    a_vm->RegisterFunction("GetArchetypeId",      kScript, GetArchetypeId);
+    a_vm->RegisterFunction("GetArchetypeName",    kScript, GetArchetypeName);
+    a_vm->RegisterFunction("HasCBPC",             kScript, HasCBPC);
     a_vm->RegisterFunction("GetFrameScore",       kScript, GetFrameScore);
     a_vm->RegisterFunction("GetMorphValue",       kScript, GetMorphValue);
     a_vm->RegisterFunction("GetMaleMorphValue",   kScript, GetMaleMorphValue);

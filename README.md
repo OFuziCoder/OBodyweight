@@ -8,12 +8,21 @@ BodySlide preset library required, and equipped clothing follows the generated s
 
 - **Procedural body shapes** generated per NPC via SKEE morphs — no preset files needed.
   Women use CBBE 3BA sliders, men use HIMBO. Magnitudes calibrated to a 1900+ preset library.
+- **Body archetypes (women)** — each NPC gets one of 15 coherent body types: Balanced, Slim,
+  Rectangle, Pear, Top-heavy, Hourglass, Voluptuous, Apple/Soft, BBW, Athletic, Athletic-curvy,
+  Obese, Stocky, Petite, Amazon. The archetype drives bust/waist/hips/belly/tone together, so
+  bodies read as intentional, recognizable shapes — not random feature combinations.
+- **Average-centered distribution** — the median body is balanced/average in every measure;
+  petite and curvy bodies taper off to the sides. Extremes are the minority, not the norm.
 - **Seam-free** — the NPC's real weight value is never changed; body-size variety comes
   purely from morphs, so head, body and worn outfit always match (no neck seams).
 - **Realistic + fantasy mix** — most NPCs are grounded; a tunable minority are exaggerated.
-- **Body traits** — independent per-NPC features. Women: busty, perky/saggy (size-derived),
-  wide hips, hip dips, wasp waist, soft belly, thick thighs, thigh gap. Men: big/flat pecs,
-  V-taper, barrel chest, gut, thick/skinny legs.
+- **Light traits** — small per-NPC variations layered on top of the archetype (perky/saggy
+  derived from bust size, etc.). Men: big/flat pecs, V-taper, barrel chest, gut, thick/skinny legs.
+- **Per-body physics (CBPC, optional)** — physics scales with the actual body: bounce amplitude and
+  collider size follow size + softness (bigger/softer = more jiggle and larger colliders; toned/lean
+  = firmer and tighter). Soft dependency on CBPC — without it, nothing changes. Drop-in config files
+  are included.
 - **Muscle tone** — women have a tunable "athletic" fraction with visible abs/arm/leg
   definition (and a rare **snu snu** super-toned Amazon); men get tone automatically from
   their build. Suppressed by body fat, so it reads correctly.
@@ -46,6 +55,7 @@ Body Shape mode (Procedural Morphs / OBody Presets), a **Male bodies** on/off to
 - **SkyUI** (MCM)
 - A **CBBE / CBBE 3BA** female body and a **HIMBO** male body, both **built in BodySlide with
   "Build Morphs" checked** (the `.tri` data). Build your armors with morphs for clothing to follow.
+- *(Optional)* **CBPC** — enables the per-body physics. Without it, OBW just skips that step.
 
 ## Installation
 
@@ -64,6 +74,18 @@ Presets mode it leaves OBody's presets alone and only randomizes weight.
 
 - Female slider names target CBBE 3BA; male names target HIMBO. Other bodies use different
   slider names and would need the tables adjusted.
+
+## For mod authors
+
+OBW exposes the generated body type so other plugins can react to it (Papyrus, soft dependency):
+
+```
+int    OBW_Native.GetArchetypeId(Actor akActor)    ; 0-14, or -1 if none
+string OBW_Native.GetArchetypeName(Actor akActor)  ; "Pear", "BBW", "Hourglass", ...
+```
+
+Deterministic per NPC + playthrough seed (matches the body they were given). Gate your calls so
+they only run when OBW is installed.
 
 ## Credits
 

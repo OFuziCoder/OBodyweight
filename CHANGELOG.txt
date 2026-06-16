@@ -1,3 +1,26 @@
+Version 1.3.0
+
+- Body archetypes: each NPC now gets one of 15 coherent body types (Balanced, Slim, Rectangle,
+  Pear, Top-heavy, Hourglass, Voluptuous, Apple/Soft, BBW, Athletic, Athletic-curvy, Obese,
+  Stocky, Petite, Amazon) that drives bust/waist/hips/belly/tone together. Replaces the old
+  independent trait rolls as the primary shape driver (light traits still add micro-variation),
+  so bodies read as intentional, recognizable shapes instead of random combinations.
+- Average-centered distribution: the MEDIAN body is now balanced/average in every measure, with
+  petite and curvy bodies tapering off to the sides. The old distribution pushed most NPCs to the
+  extremes (the "everyone is a prominent hourglass" look) — now extremes are the minority.
+- Obesity & more body variety: BBW (big soft curvy) and Obese archetypes added, plus Rectangle
+  (straight/boyish), Athletic-curvy and Stocky.
+- Per-body physics (CBPC, optional): physics now scales with the actual body. Bounce amplitude and
+  collider size follow the body's size and softness (bigger/softer = more jiggle + larger colliders;
+  toned/lean = firmer/tighter). Uses CBPC's interpolation API per NPC; soft dependency — no CBPC, no
+  change. Drop-in config files included (CBPCBounceinterpolationconfig_OBW / CBPCCollisioninterpolationconfig_OBW).
+- Body-type API for other mods: OBW_Native.GetArchetypeId(actor) (0-14) and GetArchetypeName(actor)
+  ("Pear", "BBW", "Hourglass"...) let other plugins read an NPC's generated body type.
+- MCM "Reprocess all loaded NPCs" button: re-applies the current generation + physics to every NPC
+  around you without waiting for cell reloads — handy after changing settings or tuning.
+- Smoother vertices retained: the soft-cap that keeps big bodies from spiking the sculpted mesh
+  still applies on top of the archetype deltas (no breaks/spikes).
+
 Version 1.2.1
 
 - Fix: the re-roll hotkey rebind (MCM) now takes effect immediately. Assigning a new key

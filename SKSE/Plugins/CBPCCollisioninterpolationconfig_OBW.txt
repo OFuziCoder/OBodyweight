@@ -1,0 +1,32 @@
+[Settings]
+UniqueName = OBW
+
+# OBW per-body COLLISION: OBW calls ApplyCollisionInterpolation(actor,"OBW",percent) with the same
+# archetype percent as bounce. Each node interpolates collider geometry from value@0% to value@100%.
+# Values use the REAL base collider positions (from CBPCollisionConfig.txt) with the RADIUS scaled:
+# 0% = firm/smaller, 100% = heavy/bigger. percent ~32 -> ~base radius (neutral). x,y,z kept; only r scaled.
+# Format per node: x,y,z,r@0%  |  x,y,z,r@100%
+# (If collision looks too big/small at the neutral default, the semantics is offset not absolute -> tell me.)
+
+[AffectedNodes]
+NPC L Breast
+NPC R Breast
+NPC L Butt
+NPC R Butt
+HDT Belly
+
+# base weight100 sphere -> radius x0.85 (firm) | x1.40 (heavy)
+[NPC L Breast]
+0.0,5.0,-4.5,3.4 | 0.0,5.0,-4.5,5.6
+
+[NPC R Breast]
+0.0,5.0,-4.5,3.4 | 0.0,5.0,-4.5,5.6
+
+[NPC L Butt]
+-3.0,2.5,-3.0,4.25 | -3.0,2.5,-3.0,7.0
+
+[NPC R Butt]
+3.0,2.5,-3.0,4.25 | 3.0,2.5,-3.0,7.0
+
+[HDT Belly]
+0,2.0,0,2.38 | 0,2.0,0,3.92

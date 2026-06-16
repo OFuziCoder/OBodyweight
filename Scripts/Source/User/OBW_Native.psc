@@ -19,6 +19,9 @@ Function RegenerateSeed() global native
 ; Morph queue — C++ owns the queue; Papyrus only asks for the next actor.
 Function QueueForMorphs(Actor akActor) global native
 Actor Function GetNextMorphActor() global native
+; Re-apply to EVERY loaded NPC (MCM button): re-queues them so the current generation + CBPC physics
+; reapply without cell reloads. Keeps each body (same seed). Returns how many were queued.
+int Function ReprocessAllLoaded() global native
 ; True if the queue still has actors waiting (used for throttled/lazy draining).
 bool Function HasMorphsPending() global native
 
@@ -68,6 +71,9 @@ float Function GetActorIntensity(Actor akActor) global native
 ; This ensures all body parts are correlated (same frame score → proportional shape).
 float Function GetFrameScore(Actor akActor) global native
 float Function GetMorphValue(Actor akActor, float afFrameScore, string morphName) global native
+; Volume sliders: GetMorphValue already multiplied by the per-NPC intensity and soft-capped
+; to the sculpted vertex range (no spikes/breaks). Apply directly (do NOT multiply by kVol).
+float Function GetVolumeMorph(Actor akActor, float afFrameScore, string morphName) global native
 
 ; Male morphs (HIMBO). Derived from build (muscle+fat) + traits + unusual.
 float Function GetMaleMorphValue(Actor akActor, string morphName) global native
@@ -76,6 +82,20 @@ float Function GetMaleIntensity(Actor akActor) global native
 
 ; Muscle tone 0-100 (same value that drives the MuscleAbs/Arms/Legs sliders).
 int Function GetToneScore(Actor akActor) global native
+
+; CBPC physics tier for this NPC's archetype: 0 = default, 1 = firm (toned/lean), 2 = soft
+; (heavy/jiggly). Put the NPC in the matching faction so CBPC's IsInFaction picks the config.
+int Function GetPhysicsTier(Actor akActor) global native
+; Continuous physics % (0-100) that correlates with the real body (frame size + archetype softness).
+; kind 0 = bounce, 1 = collision. ~32 = neutral. Used with ApplyBounce/CollisionInterpolation.
+int Function GetPhysicsPercent(Actor akActor, int aiKind) global native
+
+; Public body-type API: the NPC's full archetype (15 types, vs the 5 physics tiers).
+; Id 0-14 (-1 none); name e.g. "Pear","BBW","Hourglass". For other mods.
+int Function GetArchetypeId(Actor akActor) global native
+string Function GetArchetypeName(Actor akActor) global native
+; True if CBPC (cbp.dll) is loaded — gate the physics integration so non-CBPC users are fine.
+bool Function HasCBPC() global native
 
 ; True only on the Skyrim VR runtime.
 bool Function IsVR() global native

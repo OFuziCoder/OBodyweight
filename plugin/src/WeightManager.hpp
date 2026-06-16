@@ -33,6 +33,9 @@ public:
     // GetMorphValue: pass the score from GetFrameScore to keep all parts correlated.
     float GetFrameScore(RE::Actor* a_actor);
     float GetMorphValue(RE::Actor* a_actor, float a_frameScore, std::string_view morphName);
+    // Volume slider value already combined with per-NPC intensity and soft-capped to the
+    // sculpted vertex range (no spikes). Use for kVol sliders; kDef ones use GetMorphValue.
+    float GetVolumeMorph(RE::Actor* a_actor, float a_frameScore, std::string_view morphName);
 
     // Male procedural morphs (HIMBO sliders). Triggered by OBody's OnActorGenerated
     // (OBody has a male preset DB too), drained by OBW_Quest's sex-branched ApplyMorphs.
@@ -80,13 +83,30 @@ public:
     void          SetMaleBuild(float b)         { _maleBuild = b; }
 
     // Female muscle-tone score 0-100 (athletic roll + snu snu, belly-suppressed) — the
-    // same value that drives the muscle morph sliders. Exposed for other mods' classifier.
+    // same value that drives the muscle morph sliders. Exposed for other mods.
     int GetToneScore(RE::Actor* a_actor);
 
     // Per-NPC effective intensity: realistic (~1.0) or fantasy (~1.3-2.2),
     // times the global scale. Papyrus calls this once per NPC and applies it to
     // every slider. This is what produces a realistic-majority + fantasy-minority mix.
     float GetActorIntensity(RE::Actor* a_actor);
+
+    // CBPC physics tier for this NPC's archetype: 0 = default, 1 = firm (toned/lean),
+    // 2 = soft (heavy/jiggly). Papyrus puts the NPC in the matching faction so CBPC's
+    // IsInFaction condition selects the right physics config, then RefreshActorBounceSettings.
+    int GetPhysicsTier(RE::Actor* a_actor);
+
+    // CONTINUOUS physics percentage (0-100) for CBPC's ApplyBounce/CollisionInterpolation, so the
+    // physics CORRELATES with the actual body: it follows frame size + the archetype's softness
+    // (muscle firms, fat softens). kind 0 = bounce (size + softness), 1 = collision (size-driven).
+    // ~32 is neutral (amplitude ~1.0 / base collider).
+    int GetPhysicsPercent(RE::Actor* a_actor, int a_kind);
+
+    // Public body-type API (for other mods): the NPC's full archetype.
+    // Id 0-14 (-1 if none); name e.g. "Pear","BBW","Hourglass". 15 archetypes, unlike the 5
+    // physics tiers. Deterministic per NPC + seed (same as the morphs they got).
+    int         GetArchetypeId(RE::Actor* a_actor);
+    std::string GetArchetypeName(RE::Actor* a_actor);
 
     // Per-session processed set — prevents re-applying weight on every cell crossing.
     // Locked: cell-attach (loading thread) and Papyrus VM both touch these containers.
@@ -113,6 +133,11 @@ public:
     // Force re-generation for a specific actor (used by the re-generate hotkey).
     // Assigns a new random seed to this actor so the result differs from the default.
     void RegenerateActor(RE::Actor* a_actor);
+
+    // Re-apply to EVERY loaded NPC: clears their processed flag and re-queues them, so the current
+    // generation logic + CBPC physics are re-applied without waiting for cell reloads (MCM button).
+    // Keeps each NPC's body (same seed); returns how many were queued.
+    int ReprocessAllLoaded();
 
     // SKSE cosave callbacks
     static void SaveCallback(SKSE::SerializationInterface* a_intf);
