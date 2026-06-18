@@ -11,6 +11,7 @@ Event OnInit()
     RegisterForModEvent("OBW_RebindKey", "OnRebindKey")
     RegisterForModEvent("OBW_Reprocess", "OnReprocess")
     BindReRollKey()
+    RegisterForSingleUpdate(2.0)   ; start the persistent manual-assign poll (self-perpetuates)
 EndEvent
 
 Event OnPlayerLoadGame()
@@ -18,6 +19,7 @@ Event OnPlayerLoadGame()
     RegisterForModEvent("OBW_RebindKey", "OnRebindKey")
     RegisterForModEvent("OBW_Reprocess", "OnReprocess")
     BindReRollKey()
+    RegisterForSingleUpdate(2.0)   ; start the persistent manual-assign poll (self-perpetuates)
 EndEvent
 
 ; Fired by the MCM "Reprocess all loaded NPCs" button: re-queue every loaded NPC and arm the drain,
@@ -27,6 +29,13 @@ Event OnReprocess(string asEvent, string asStr, float afNum, Form akSender)
     Debug.Notification("OBodyNG Weight: reprocessing " + n + " loaded NPC(s)...")
     RegisterForSingleUpdate(0.3)
 EndEvent
+
+; Arms the persistent manual-assign poll (OnUpdate self-perpetuates from here). Called on every
+; game load by OBW_MCM.OnGameReload, since OnPlayerLoadGame doesn't fire on Quest scripts.
+Function StartPoll()
+    RegisterForSingleUpdate(2.0)   ; arm FIRST so a Log issue can never block the poll
+    OBW_Native.Log("StartPoll: manual-assign poll armed")
+EndFunction
 
 Function BindReRollKey()
     UnregisterForKey(_reRollKey)
@@ -43,7 +52,9 @@ Event OnKeyDown(int keyCode)
     if keyCode != _reRollKey
         return
     endif
-    if OBW_Native.GetBodyMode() != 0
+    ; Re-roll works in procedural (0/2) and weight-driven OBody mode (1 = re-roll the mock weight
+    ; -> the preset re-interpolates). Only skip pure OBody passthrough (mode 1 + Weight mode = NPC Default).
+    if OBW_Native.GetBodyMode() == 1 && OBW_Native.GetMode() == 2
         return
     endif
     ; Pick the target: VR has no crosshair (GetCurrentCrosshairRef is None), so there we
@@ -69,14 +80,24 @@ EndEvent
 Event OnActorGenerated(Actor akActor, string presetName)
     ; HasMorphsApplied is one-shot: returns true and auto-clears if we just called
     ; UpdateModelWeight(true) for this actor. Suppresses the OBody re-fire loop.
-    if OBW_Native.HasMorphsApplied(akActor)
+    int gm = OBW_Native.GetBodyMode()
+    ; Mode 1 passthrough (Weight mode = NPC Default) -> leave the actor to OBody.
+    if gm == 1 && OBW_Native.GetMode() == 2
         return
     endif
-    if OBW_Native.GetBodyMode() == 1
+    ; The HasMorphsApplied one-shot breaks the re-fire loop for the PROCEDURAL modes (0/2), which
+    ; re-apply unconditionally. Mode 1 must NOT consume it: it breaks its own loop (it unassigns the
+    ; preset + early-outs on "no preset"), and eating the one-shot here would drop a genuine MANUAL
+    ; preset re-assignment that the user makes through OBody's own menu.
+    if gm != 1 && OBW_Native.HasMorphsApplied(akActor)
         return
     endif
-    ; Male-bodies master toggle: don't even queue males when the feature is off.
-    if akActor.GetActorBase().GetSex() == 0 && !OBW_Native.GetMaleBodies()
+    ; Per-sex master toggles: don't even queue a sex the user disabled. 0 = male, 1 = female.
+    int sex = akActor.GetActorBase().GetSex()
+    if sex == 0 && !OBW_Native.GetMaleBodies()
+        return
+    endif
+    if sex == 1 && !OBW_Native.GetFemaleBodies()
         return
     endif
     OBW_Native.QueueForMorphs(akActor)
@@ -109,31 +130,76 @@ Event OnUpdate()
         else
             RegisterForSingleUpdate(1.0)    ; only distant actors left — poll slowly
         endif
-    endif
-EndEvent
-
-Function ApplyMorphs(Actor akActor)
-    if OBW_Native.GetBodyMode() != 0
         return
     endif
 
-    ; Male-bodies master toggle: leave males entirely alone when off — don't even clear
-    ; OBody's morphs, so OBody's own male presets keep working. 0 = male, 1 = female.
+    ; Idle: catch MANUAL preset assignments. OBody's preset menu (ApplyPresetByName) does NOT fire
+    ; OnActorGenerated, so we watch the crosshair target (where the OBody menu applies): if it has an
+    ; OBody preset assigned that we haven't supplanted yet (GetPresetAssignedToActor != "" is only
+    ; true between OBody assigning and us injecting+unassigning), inject it. Mode 1, non-passthrough.
+    if OBW_Native.GetBodyMode() == 1 && OBW_Native.GetMode() != 2
+        Actor target = Game.GetCurrentCrosshairRef() as Actor
+        if target && OBodyNative.GetPresetAssignedToActor(target) != ""
+            OBW_Native.QueueForMorphs(target)
+            RegisterForSingleUpdate(0.2)    ; drain it now
+            return
+        endif
+    endif
+    RegisterForSingleUpdate(2.0)            ; persistent light poll for manual preset assignments
+EndEvent
+
+Function ApplyMorphs(Actor akActor)
+    ; Body mode 1 = OBody Presets, now WEIGHT-DRIVEN: re-apply the OBody-assigned preset
+    ; interpolated at the per-NPC mock weight (faithful curve + synthesized lean<->full on
+    ; static volumes). Modes 0 (Procedural) and 2 (Procedural Oriented) use the path below.
+    if OBW_Native.GetBodyMode() == 1
+        ApplyPresetWeighted(akActor)
+        return
+    endif
+
+    ; Per-sex master toggles: leave a disabled sex entirely alone — don't even touch OBody's
+    ; morphs, so OBody's own presets keep working for that sex. 0 = male, 1 = female.
     bool isFemale = akActor.GetActorBase().GetSex() == 1
+    if isFemale && !OBW_Native.GetFemaleBodies()
+        return
+    endif
     if !isFemale && !OBW_Native.GetMaleBodies()
         return
     endif
 
-    ; Clear OBody's preset morphs (key "OBody") — OBody has a male preset DB too, so
-    ; without this the male HIMBO preset would stack with our "OBW".
-    NiOverride.ClearBodyMorphNames(akActor, "OBody")
+    ; OBody's "processed" flag lives under the "OBody" morph key, named by OBody's CURRENT distribution key
+    ; (read from the same StorageUtil value OBody's DLL uses; default "obody_processed"). Read its value so
+    ; we can re-assert it after removing OBody's contribution (so OBody leaves the actor to us).
+    string obKey = StorageUtil.GetStringValue(None, "obody_ng_distribution_key", "obody_processed")
+    float wasProcessed = NiOverride.GetBodyMorph(akActor, obKey, "OBody")
 
-    ; Sex-branched: females use CBBE 3BA sliders, males use HIMBO.
+    ; Orientation strength: only body mode 2 (Procedural Oriented) blends toward the OBody preset; 0 = pure.
+    float orient = 0.0
+    if OBW_Native.GetBodyMode() == 2
+        orient = OBW_Native.GetPresetOrient()
+    endif
+
+    ; Apply our procedural morphs (key "OBW"). The OBody preset is STILL present at this point, so the
+    ; oriented blend below can read it before we remove it.
     if isFemale
         ApplyFemaleMorphs(akActor)
     else
         ApplyMaleMorphs(akActor)
     endif
+    if orient > 0.0
+        BlendWithPreset(akActor, orient, isFemale)   ; pull each "OBW" slider toward the preset value
+    endif
+
+    ; Take OBody out of the equation for this actor: UNASSIGN its preset (nothing to re-apply) + clear its
+    ; morphs via OBody's OWN native, then re-assert the processed flag so OBody skips the actor forever. Our
+    ; "OBW" morphs (persisted by SKEE) are then the only ones -> OBW supplants OBody persistently. (Doing
+    ; this AFTER our apply/blend is what lets the oriented blend read the preset first.)
+    OBodyNative.AssignPresetToActor(akActor, "", false, true)   ; unassign preset, do not apply morphs
+    OBodyNative.ResetActorOBodyMorphs(akActor)                   ; clear OBody's "OBody" morphs (canonical native)
+    if wasProcessed == 0.0
+        wasProcessed = 1.0
+    endif
+    NiOverride.SetBodyMorph(akActor, obKey, "OBody", wasProcessed)
 
     ; Apply the new shape with the FEWEST body rebuilds — each rebuild makes SKEE
     ; reprocess EVERY overlay, which is heavy with large overlay counts.
@@ -158,6 +224,76 @@ Function ApplyMorphs(Actor akActor)
     if isFemale
         ApplyPhysicsTier(akActor)
     endif
+EndFunction
+
+; ── Body mode 1 (OBody Presets, weight-driven) ────────────────────────────────────────────
+; OBody still PICKS the preset (its distribution config is respected); OBW then RE-APPLIES it
+; interpolated at the per-NPC mock weight, so NPCs sharing a preset vary and static presets gain
+; a synthesized lean<->full axis. Values never exceed the preset's own (no vertex overshoot). Then
+; OBW supplants OBody (same as the procedural path) so the result persists. Pure OBody passthrough
+; (Weight mode = NPC Default) is filtered out by the callers before we get here.
+Function ApplyPresetWeighted(Actor akActor)
+    ; Per-sex master toggles: leave a disabled sex to OBody/vanilla (don't strip its preset).
+    bool isFemale = akActor.GetActorBase().GetSex() == 1
+    if isFemale && !OBW_Native.GetFemaleBodies()
+        return
+    endif
+    if !isFemale && !OBW_Native.GetMaleBodies()
+        return
+    endif
+
+    ; Which preset did OBody assign to this actor? (Empty = nothing assigned -> leave it alone.)
+    string preset = OBodyNative.GetPresetAssignedToActor(akActor)
+    if preset == ""
+        return
+    endif
+
+    ; OBody's distribution key (its "processed" flag lives under it, morph key "OBody"; default
+    ; "obody_processed"). Read from the same StorageUtil value OBody's DLL uses.
+    string obKey = StorageUtil.GetStringValue(None, "obody_ng_distribution_key", "obody_processed")
+
+    ; PREFERRED: apply the whole preset in C++ via SKEE — no 128-slider cap, far fewer calls. It sets
+    ; every slider, drops OBody's "OBody"-key morphs, re-asserts "processed", and rebuilds (body + armor).
+    if OBW_Native.ApplyPresetMorphs(preset, akActor, obKey)
+        OBodyNative.AssignPresetToActor(akActor, "", false, true)   ; unassign -> poll won't re-inject
+        OBW_Native.Log("preset-weight: applied '" + preset + "' to " + akActor.GetActorBase().GetName())
+        return
+    endif
+
+    ; FALLBACK (SKEE C++ interface unavailable): the Papyrus array path (capped at 128 sliders).
+    string[] names = OBW_Native.GetPresetSliders(preset)
+    if names.Length == 0
+        OBW_Native.Log("preset-weight: preset NOT FOUND '" + preset + "'")
+        return
+    endif
+    float[] vals = OBW_Native.GetPresetMorphs(preset, akActor)
+    if vals.Length != names.Length
+        return
+    endif
+    float wasProcessed = NiOverride.GetBodyMorph(akActor, obKey, "OBody")
+    int i = 0
+    while i < names.Length
+        NiOverride.SetBodyMorph(akActor, names[i], "OBW", vals[i])
+        i += 1
+    endwhile
+    OBodyNative.AssignPresetToActor(akActor, "", false, true)
+    OBodyNative.ResetActorOBodyMorphs(akActor)
+    if wasProcessed == 0.0
+        wasProcessed = 1.0
+    endif
+    NiOverride.SetBodyMorph(akActor, obKey, "OBody", wasProcessed)
+    Form bodyArmor = akActor.GetWornForm(0x00000004)
+    if bodyArmor
+        OBW_Native.MarkMorphsApplied(akActor)
+        akActor.UnequipItem(bodyArmor, false, true)
+        Utility.Wait(0.05)
+        OBW_Native.MarkMorphsApplied(akActor)
+        akActor.EquipItem(bodyArmor, false, true)
+    else
+        OBW_Native.MarkMorphsApplied(akActor)
+        NiOverride.UpdateModelWeight(akActor)
+    endif
+    OBW_Native.Log("preset-weight (PSC fallback): applied '" + preset + "' to " + akActor.GetActorBase().GetName())
 EndFunction
 
 ; Per-body physics WITHOUT replacing the user's config: CBPC's ApplyBounceInterpolation scales the
@@ -246,4 +382,80 @@ Function ApplyMaleMorphs(Actor akActor)
     NiOverride.SetBodyMorph(akActor, "TorsoRibsDefinition", "OBW", OBW_Native.GetMaleMorphValue(akActor, "TorsoRibsDefinition") * kDef)
     NiOverride.SetBodyMorph(akActor, "ArmsTrapsValleys",   "OBW", OBW_Native.GetMaleMorphValue(akActor, "ArmsTrapsValleys")   * kDef)
     NiOverride.SetBodyMorph(akActor, "LegsThinner",      "OBW", OBW_Native.GetMaleMorphValue(akActor, "LegsThinner")      * kDef)
+EndFunction
+
+; ── Procedural Oriented (body mode 2): blend toward the OBody preset ──────────────────────────────
+; Pulls each procedural "OBW" slider toward the OBody preset's value by `orient` (0 = keep procedural,
+; 1 = match the preset). Only sliders the preset actually sets (value > 0) are oriented; the rest stay
+; pure procedural. Called from ApplyMorphs AFTER our morphs and BEFORE we clear OBody (so the preset is
+; still readable). final = obwVal*(1-orient) + presetVal*orient.
+Function BlendWithPreset(Actor akActor, float orient, bool isFemale)
+    string[] sliders
+    if isFemale
+        sliders = FemaleSliders()
+    else
+        sliders = MaleSliders()
+    endif
+    int i = 0
+    while i < sliders.Length
+        float pv = NiOverride.GetBodyMorph(akActor, sliders[i], "OBody")
+        if pv > 0.0
+            float obw = NiOverride.GetBodyMorph(akActor, sliders[i], "OBW")
+            NiOverride.SetBodyMorph(akActor, sliders[i], "OBW", obw * (1.0 - orient) + pv * orient)
+        endif
+        i += 1
+    endwhile
+EndFunction
+
+string[] Function FemaleSliders()
+    string[] s = new string[25]
+    s[0]  = "Breasts"
+    s[1]  = "Butt"
+    s[2]  = "Belly"
+    s[3]  = "Hips"
+    s[4]  = "Thighs"
+    s[5]  = "BigButt"
+    s[6]  = "Arms"
+    s[7]  = "ForearmSize"
+    s[8]  = "WristSize"
+    s[9]  = "ChubbyArms"
+    s[10] = "Waist"
+    s[11] = "BreastsGone"
+    s[12] = "BreastPerkiness"
+    s[13] = "BreastGravity2"
+    s[14] = "BreastWidth"
+    s[15] = "HipBone"
+    s[16] = "ThighInsideThicc_v2"
+    s[17] = "SlimThighs"
+    s[18] = "VeraMuscleTones"
+    s[19] = "MuscleAbs"
+    s[20] = "MuscleArms"
+    s[21] = "MuscleLegs"
+    s[22] = "MuscleMoreAbs_v2"
+    s[23] = "MuscleMoreArms_v2"
+    s[24] = "MuscleMoreLegs_v2"
+    return s
+EndFunction
+
+string[] Function MaleSliders()
+    string[] s = new string[18]
+    s[0]  = "Muscle"
+    s[1]  = "BodyMass"
+    s[2]  = "PecsSize"
+    s[3]  = "ArmsBiceps"
+    s[4]  = "Chubby"
+    s[5]  = "TorsoBelly"
+    s[6]  = "LegsSize"
+    s[7]  = "ButtBooty"
+    s[8]  = "Lean"
+    s[9]  = "PecsFlatten"
+    s[10] = "TorsoShoulderInc"
+    s[11] = "TorsoWaistSize"
+    s[12] = "TorsoWidth"
+    s[13] = "TorsoFlatAbs"
+    s[14] = "TorsoVLine"
+    s[15] = "TorsoRibsDefinition"
+    s[16] = "ArmsTrapsValleys"
+    s[17] = "LegsThinner"
+    return s
 EndFunction

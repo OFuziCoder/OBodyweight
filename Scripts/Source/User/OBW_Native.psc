@@ -4,6 +4,27 @@ Scriptname OBW_Native Hidden
 ; to the actor's real weight.
 float Function GetWeight(Actor akActor) global native
 
+; Body mode 2 (Procedural Oriented) / 1 (OBody Presets, weight-driven): preset support.
+; GetPresetSliders returns the slider names of an OBody preset (parsed from the BodySlide
+; SliderPresets folder); GetPresetMorphs returns the matching morph values (aligned 1:1) for
+; the given actor at its mock weight (faithful lerp where the author defined a weight curve,
+; synthesized lean<->full on static volume sliders, never exceeding the preset's own values).
+string[] Function GetPresetSliders(string asPreset) global native
+float[] Function GetPresetMorphs(string asPreset, Actor akActor) global native
+
+; Body mode 1 (preferred path): applies the OBody preset interpolated at the actor's mock weight
+; ENTIRELY in C++ via SKEE — no 128-slider array cap, far fewer calls. asObKey = OBody's distribution
+; key. Sets the morphs, drops OBody's "OBody"-key morphs, re-asserts "processed", and rebuilds.
+; Returns false if SKEE is unavailable or the preset wasn't found (caller falls back to the array path).
+bool Function ApplyPresetMorphs(string asPreset, Actor akActor, string asObKey) global native
+
+; Debug: write a line into OBodyNGWeight.log (only when debug logging is ON).
+Function Log(string asMsg) global native
+
+; Debug logging master switch (MCM, off by default). Persisted in the cosave.
+bool Function GetDebugLog() global native
+Function SetDebugLog(bool abOn) global native
+
 ; Distribution mode: 0=Random, 1=Seeded/Deterministic, 2=NpcDefault
 int Function GetMode() global native
 Function SetMode(int aiMode) global native
@@ -25,13 +46,18 @@ int Function ReprocessAllLoaded() global native
 ; True if the queue still has actors waiting (used for throttled/lazy draining).
 bool Function HasMorphsPending() global native
 
-; Body shape mode: 0 = Procedural NiOverride morphs, 1 = OBody Presets (weight only)
+; Body shape mode: 0 = Procedural NiOverride morphs, 1 = OBody Presets (weight only),
+; 2 = Procedural Oriented (procedural blended toward the OBody preset; strength = GetPresetOrient)
 int Function GetBodyMode() global native
 Function SetBodyMode(int aiMode) global native
 
 ; Global morph intensity multiplier (1.0 = default). Adjustable in the MCM.
 float Function GetMorphScale() global native
 Function SetMorphScale(float afScale) global native
+
+; Preset orientation strength 0.0-1.0 for body mode 2 (0 = pure procedural, 1 = pure preset). MCM-tunable.
+float Function GetPresetOrient() global native
+Function SetPresetOrient(float afStrength) global native
 
 ; Fraction of "fantasy" (exaggerated) NPCs, 0.0-1.0. Adjustable in the MCM.
 float Function GetFantasyRatio() global native
@@ -53,6 +79,10 @@ Function SetAthleticRatio(float afRatio) global native
 ; Re-roll key (DirectInput scancode). Default 26 = the [ / { key. Bindable in the MCM.
 int Function GetReRollKey() global native
 Function SetReRollKey(int aiKey) global native
+
+; Master toggle for the female-body feature (morphs). Off = OBW ignores women (OBody/vanilla handle them).
+bool Function GetFemaleBodies() global native
+Function SetFemaleBodies(bool abOn) global native
 
 ; Master toggle for the male-body feature (weight + morphs). Off = OBW ignores men.
 bool Function GetMaleBodies() global native

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(OBodyNGWeight VERSION 1.2.1 LANGUAGES CXX)
+project(OBodyNGWeight VERSION 1.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,6 +56,7 @@ set(SOURCES
     src/main.cpp
     src/WeightManager.cpp
     src/PapyrusBindings.cpp
+    src/PresetManager.cpp
     src/Config.cpp
 )
 

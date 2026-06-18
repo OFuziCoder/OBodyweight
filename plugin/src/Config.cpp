@@ -26,16 +26,19 @@ float ReadFloat(const char* section, const char* key, float fallback) {
 
 void Load() {
     g_defaultMorphScale   = std::clamp(ReadFloat("Defaults", "MorphScale", 1.0f), 0.0f, 2.5f);
+    g_defaultPresetOrient = std::clamp(ReadFloat("Defaults", "PresetOrient", 0.5f), 0.0f, 1.0f);
     g_defaultFantasyRatio = std::clamp(ReadFloat("Defaults", "FantasyRatio", 0.15f), 0.0f, 1.0f);
     g_defaultUnusualRatio       = std::clamp(ReadFloat("Defaults", "UnusualRatio", 0.06f), 0.0f, 1.0f);
     g_defaultBreastUnusualRatio = std::clamp(ReadFloat("Defaults", "BreastUnusualRatio", 0.06f), 0.0f, 1.0f);
     g_defaultAthleticRatio      = std::clamp(ReadFloat("Defaults", "AthleticRatio", 0.15f), 0.0f, 1.0f);
     g_defaultReRollKey          = static_cast<int>(ReadFloat("Defaults", "ReRollKey", 26.0f));
+    g_defaultFemaleBodies       = GetPrivateProfileIntA("Defaults", "FemaleBodies", 1, kIniPath) != 0;
     g_defaultMaleBodies         = GetPrivateProfileIntA("Defaults", "MaleBodies", 1, kIniPath) != 0;
     g_defaultMaleBuild          = std::clamp(ReadFloat("Defaults", "MaleBuild", 1.0f), 0.0f, 2.0f);
-    SKSE::log::info("Config: MorphScale={:.2f}, Fantasy={:.2f}, Unusual={:.2f}, BreastUnusual={:.2f}, Athletic={:.2f}, MaleBodies={}, MaleBuild={:.2f}",
+    g_defaultDebugLog           = GetPrivateProfileIntA("Defaults", "DebugLog", 0, kIniPath) != 0;
+    SKSE::log::info("Config: MorphScale={:.2f}, Fantasy={:.2f}, Unusual={:.2f}, BreastUnusual={:.2f}, Athletic={:.2f}, FemaleBodies={}, MaleBodies={}, MaleBuild={:.2f}",
                     g_defaultMorphScale, g_defaultFantasyRatio, g_defaultUnusualRatio,
-                    g_defaultBreastUnusualRatio, g_defaultAthleticRatio, g_defaultMaleBodies, g_defaultMaleBuild);
+                    g_defaultBreastUnusualRatio, g_defaultAthleticRatio, g_defaultFemaleBodies, g_defaultMaleBodies, g_defaultMaleBuild);
 }
 
 }  // namespace OBW::Config

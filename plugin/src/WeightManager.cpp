@@ -12,13 +12,17 @@ namespace OBW {
 
 WeightManager::WeightManager() {
     _morphScale   = Config::g_defaultMorphScale;
+    _presetOrient = Config::g_defaultPresetOrient;
     _fantasyRatio = Config::g_defaultFantasyRatio;
     _unusualRatio = Config::g_defaultUnusualRatio;
     _breastUnusualRatio = Config::g_defaultBreastUnusualRatio;
     _athleticRatio = Config::g_defaultAthleticRatio;
+    _femaleBodies = Config::g_defaultFemaleBodies;
     _maleBodies = Config::g_defaultMaleBodies;
     _maleBuild = Config::g_defaultMaleBuild;
     _reRollKey = Config::g_defaultReRollKey;
+    _debugLog = Config::g_defaultDebugLog;
+    g_debugLog = _debugLog;
 }
 
 WeightManager& WeightManager::GetSingleton() noexcept {
@@ -55,6 +59,22 @@ float WeightManager::GenerateWeight(RE::Actor* a_actor) {
     return std::clamp(raw + _bias, 0.0f, 100.0f);
 }
 
+float WeightManager::GetPresetWeight(RE::Actor* a_actor) {
+    if (!a_actor) return 50.0f;
+    std::scoped_lock lock(_mutex);
+
+    if (_mode == WeightMode::kNpcDefault) {
+        float w = 50.0f;
+        if (auto* base = a_actor->GetActorBase()) w = base->GetWeight();
+        return std::clamp(w + _bias, 0.0f, 100.0f);
+    }
+    // Per-INSTANCE seed (actor formID, not base) so NPCs that share a base still get distinct
+    // weights -> distinct preset interpolation. Random vs Seeded comes from _seed (see Load()).
+    std::mt19937 rng{ GetActorSeed(a_actor->GetFormID()) ^ 0x7E16E700u };
+    const float raw = std::uniform_real_distribution<float>(0.0f, 100.0f)(rng);
+    return std::clamp(raw + _bias, 0.0f, 100.0f);
+}
+
 // ---------------------------------------------------------------------------
 // Procedural morphs
 // ---------------------------------------------------------------------------
@@ -70,7 +90,7 @@ struct MorphDef {
 // Target: CBBE 3BA slider names (also valid for vanilla CBBE).
 // Keys are LOWERCASE: Papyrus passes string literals lowercased (confirmed via log,
 // "Breasts" -> "breasts"), so we normalize both sides for a case-insensitive match.
-// Magnitudes calibrated to the real distribution of a 1900+ BodySlide preset library
+// Magnitudes calibrated to the real distribution of a large BodySlide preset library
 // (per-slider p10/p50/p90): Breasts > Butt > Waist > Hips. The "high" ~= preset p90.
 // Waist inverts: lower T = wider waist (petite), higher T = narrower (hourglass).
 static const std::unordered_map<std::string, MorphDef> kMorphTable{
@@ -78,11 +98,13 @@ static const std::unordered_map<std::string, MorphDef> kMorphTable{
     // top-heavy — the waist definition then decides Hourglass vs Rectangle, and traits
     // push top (busty) or bottom (wide hips). Higher independence decorrelates them so
     // some NPCs lean bust-heavy and others hip-heavy without a trait.
-    { "breasts",       { 12.0f, 88.0f, 0.34f } },  // was 100 — reduce top-heavy bias
-    { "butt",          { 10.0f, 92.0f, 0.27f } },
-    { "belly",         {  0.0f, 30.0f, 0.35f } },
-    { "hips",          {  8.0f, 86.0f, 0.26f } },  // was 68 — lower body now matches bust
-    { "thighs",        { 10.0f, 80.0f, 0.26f } },  // was 62
+    // Independence bumped (~x1.25) in the 2026-06-17 variety pass so same-archetype NPCs
+    // decorrelate more (less "clones"); arms stay low to preserve the taper. See DeltaJitter.
+    { "breasts",       { 12.0f, 88.0f, 0.42f } },  // was 100 — reduce top-heavy bias
+    { "butt",          { 10.0f, 92.0f, 0.34f } },
+    { "belly",         {  0.0f, 30.0f, 0.43f } },
+    { "hips",          {  8.0f, 86.0f, 0.33f } },  // was 68 — lower body now matches bust
+    { "thighs",        { 10.0f, 80.0f, 0.33f } },  // was 62
     // Arms track body fullness (same frame score) at a REDUCED ratio so they match
     // the body without becoming as dramatic as bust/butt. Low independence keeps the
     // four arm sliders coherent with each other → a natural taper (Arms > Forearm >
@@ -90,11 +112,17 @@ static const std::unordered_map<std::string, MorphDef> kMorphTable{
     { "arms",          {  5.0f,  50.0f, 0.10f } },
     { "forearmsize",   {  4.0f,  36.0f, 0.08f } },
     { "wristsize",     {  0.0f,  18.0f, 0.06f } },
-    { "chubbyarms",    {  0.0f,  26.0f, 0.12f } },  // only fuller bodies
+    { "chubbyarms",    {  0.0f,  26.0f, 0.13f } },  // only fuller bodies
     // Waist base is modest + some noise; the pronounced waist comes from the
     // Wasp/Straight TRAIT below, not from body size. NOT amplified by fantasy.
-    { "waist",         { 15.0f,  12.0f, 0.25f } },
+    { "waist",         { 15.0f,  12.0f, 0.31f } },
 };
+
+// Per-NPC per-region perturbation of the archetype delta (2026-06-17 variety pass): each instance
+// of the same archetype gets its own offset, so two Pears (or two Balanced) aren't clones. Kept
+// modest (+/-6) so it adds variety without lumpy junctions; suppressed for unusual bodies (their
+// character is the extreme frame). amplitude in 0-100 slider space.
+constexpr float kDeltaJitter = 6.0f;
 
 // ── Trait system ────────────────────────────────────────────────────────────
 // Each NPC rolls AT MOST ONE option per category (mutually exclusive), seeded
@@ -259,21 +287,23 @@ struct Archetype {
 };
 static const std::vector<Archetype> kArchetypes{
     //  name             wt     frB    frS   brs  butt  hips  thgh belly waist arms  tone   int
-    { "Balanced",      15.0f,   0.0f, 1.00f,   0,    0,    0,    0,    0,    5,    0,    0,  0.00f },
-    { "Rectangle",     12.0f,   0.0f, 0.95f,  -6,   -8,   -8,   -4,    0,  -12,    0,    8, -0.03f },  // straight/boyish, no waist cinch
-    { "Slim",          11.0f, -12.0f, 0.90f,  -8,   -6,   -6,   -6,    0,    0,   -4,    5, -0.05f },
-    { "Pear",          12.0f,   2.0f, 1.00f,  -8,   22,   26,   20,    0,   12,    0,    0,  0.00f },
+    // weight column flattened in the 2026-06-17 variety pass: top 4 (Balanced/Rect/Slim/Pear) went
+    // from ~50% to ~38% of NPCs, rarer types raised, so fewer NPCs land on the same archetype.
+    { "Balanced",      10.0f,   0.0f, 1.00f,   0,    0,    0,    0,    0,    5,    0,    0,  0.00f },
+    { "Rectangle",      9.0f,   0.0f, 0.95f,  -6,   -8,   -8,   -4,    0,  -12,    0,    8, -0.03f },  // straight/boyish, no waist cinch
+    { "Slim",           8.0f, -12.0f, 0.90f,  -8,   -6,   -6,   -6,    0,    0,   -4,    5, -0.05f },
+    { "Pear",           9.0f,   2.0f, 1.00f,  -8,   22,   26,   20,    0,   12,    0,    0,  0.00f },
     { "TopHeavy",       7.0f,   2.0f, 1.00f,  26,   -8,  -10,   -6,    0,    8,    0,    0,  0.00f },
     { "Hourglass",      7.0f,   4.0f, 1.00f,  20,   18,   20,    8,    0,   40,    0,    0,  0.04f },
     { "Voluptuous",     7.0f,  14.0f, 1.00f,  18,   18,   12,   10,    0,   18,    4,    0,  0.12f },
     { "AppleSoft",      6.0f,   8.0f, 1.00f,   8,    4,    6,    8,   35,  -10,   14,    0,  0.05f },
-    { "BBW",            5.0f,  18.0f, 1.00f,  24,   24,   20,   22,   30,    0,   20,    0,  0.18f },  // big soft curvy (between Voluptuous & Obese)
-    { "Athletic",       5.0f,  -4.0f, 0.95f,   0,    8,    0,    6,   -5,   14,   -2,   55,  0.00f },
-    { "AthleticCurvy",  4.0f,   2.0f, 1.00f,  12,   18,    6,   10,   -6,   16,    0,   45,  0.00f },  // toned WITH curves (fitness)
-    { "Obese",          3.5f,  24.0f, 1.00f,  20,   20,   18,   28,   70,  -15,   30,    0,  0.22f },
-    { "Stocky",         2.5f,   6.0f, 0.85f,  -4,   16,   20,   20,    6,   -8,   10,   25,  0.05f },  // short sturdy, wide lower (warrior races)
-    { "Petite",         2.0f, -28.0f, 0.70f, -10,   -8,   -8,   -8,    0,    0,   -6,    0, -0.08f },
-    { "Amazon",         1.5f,  22.0f, 1.00f,  10,   16,   14,   20,    0,   10,    0,   65,  0.10f },
+    { "BBW",            6.0f,  18.0f, 1.00f,  24,   24,   20,   22,   30,    0,   20,    0,  0.18f },  // big soft curvy (between Voluptuous & Obese)
+    { "Athletic",       6.0f,  -4.0f, 0.95f,   0,    8,    0,    6,   -5,   14,   -2,   55,  0.00f },
+    { "AthleticCurvy",  5.0f,   2.0f, 1.00f,  12,   18,    6,   10,   -6,   16,    0,   45,  0.00f },  // toned WITH curves (fitness)
+    { "Obese",          4.0f,  24.0f, 1.00f,  20,   20,   18,   28,   70,  -15,   30,    0,  0.22f },
+    { "Stocky",         4.0f,   6.0f, 0.85f,  -4,   16,   20,   20,    6,   -8,   10,   25,  0.05f },  // short sturdy, wide lower (warrior races)
+    { "Petite",         3.0f, -28.0f, 0.70f, -10,   -8,   -8,   -8,    0,    0,   -6,    0, -0.08f },
+    { "Amazon",         3.0f,  22.0f, 1.00f,  10,   16,   14,   20,    0,   10,    0,   65,  0.10f },
 };
 const Archetype& GetArchetype(std::uint32_t seedBase) {
     std::mt19937 rng{ seedBase ^ 0x0A5C1759u };
@@ -282,16 +312,26 @@ const Archetype& GetArchetype(std::uint32_t seedBase) {
     for (const auto& a : kArchetypes) { if (r < a.weight) return a; r -= a.weight; }
     return kArchetypes.front();
 }
+// Per-NPC, per-region jitter on the archetype delta (deterministic per seed+region, so it's
+// consistent across every call for the same actor). Different salt from the volume noise so the
+// two randoms don't correlate.
+float DeltaJitter(std::uint32_t seedBase, const std::string& key) {
+    const auto h = static_cast<std::uint32_t>(std::hash<std::string>{}(key));
+    std::mt19937 rng{ seedBase ^ h ^ 0x0DE17A00u };
+    return std::uniform_real_distribution<float>(-kDeltaJitter, kDeltaJitter)(rng);
+}
 float ArchetypeDelta(std::uint32_t seedBase, const std::string& key) {
     const Archetype& a = GetArchetype(seedBase);
-    if (key == "breasts") return a.dBreasts;
-    if (key == "butt")    return a.dButt;
-    if (key == "hips")    return a.dHips;
-    if (key == "thighs")  return a.dThighs;
-    if (key == "belly")   return a.dBelly;
-    if (key == "waist")   return a.dWaist;
-    if (key == "arms")    return a.dArms;
-    return 0.0f;
+    float d;
+    if      (key == "breasts") d = a.dBreasts;
+    else if (key == "butt")    d = a.dButt;
+    else if (key == "hips")    d = a.dHips;
+    else if (key == "thighs")  d = a.dThighs;
+    else if (key == "belly")   d = a.dBelly;
+    else if (key == "waist")   d = a.dWaist;
+    else if (key == "arms")    d = a.dArms;
+    else return 0.0f;
+    return d + DeltaJitter(seedBase, key);
 }
 // Index of the chosen archetype (same deterministic roll as GetArchetype) — for the physics tier.
 int GetArchetypeIndex(std::uint32_t seedBase) {
@@ -371,7 +411,9 @@ float WeightManager::GetFrameScore(RE::Actor* a_actor) {
     // mirror weight.
     std::mt19937 rng{ seedBase + 0xF00DC0FFu };
     const Archetype& arch = GetArchetype(seedBase);
-    const float fr = 50.0f + (CenterDraw(rng) - 50.0f) * arch.frameScale + arch.frameBias;
+    // _bias is the MCM "Bias" dial: a global heavier(+)/leaner(-) shift. Wired here so it affects
+    // the procedural body size (modes 0/2); mode 1 picks it up via GetPresetWeight.
+    const float fr = 50.0f + (CenterDraw(rng) - 50.0f) * arch.frameScale + arch.frameBias + _bias;
     return std::clamp(fr, 0.0f, 100.0f);
 }
 
@@ -773,6 +815,10 @@ void WeightManager::Save(SKSE::SerializationInterface* a_intf) {
     if (a_intf->OpenRecord(kRecordScl, kRecordVer))
         a_intf->WriteRecordData(_morphScale);
 
+    // Preset-orientation strength (body mode 2)
+    if (a_intf->OpenRecord(kRecordOri, kRecordVer))
+        a_intf->WriteRecordData(_presetOrient);
+
     // Fantasy ratio
     if (a_intf->OpenRecord(kRecordFan, kRecordVer))
         a_intf->WriteRecordData(_fantasyRatio);
@@ -793,6 +839,10 @@ void WeightManager::Save(SKSE::SerializationInterface* a_intf) {
     if (a_intf->OpenRecord(kRecordKey, kRecordVer))
         a_intf->WriteRecordData(_reRollKey);
 
+    // Female-bodies master toggle
+    if (a_intf->OpenRecord(kRecordFem, kRecordVer))
+        a_intf->WriteRecordData(_femaleBodies);
+
     // Male-bodies master toggle
     if (a_intf->OpenRecord(kRecordMale, kRecordVer))
         a_intf->WriteRecordData(_maleBodies);
@@ -800,6 +850,10 @@ void WeightManager::Save(SKSE::SerializationInterface* a_intf) {
     // Male build multiplier
     if (a_intf->OpenRecord(kRecordMBld, kRecordVer))
         a_intf->WriteRecordData(_maleBuild);
+
+    // Debug-logging toggle
+    if (a_intf->OpenRecord(kRecordDbg, kRecordVer))
+        a_intf->WriteRecordData(_debugLog);
 
     // Per-actor override seeds (hotkey re-rolls) — count followed by id/seed pairs.
     if (a_intf->OpenRecord(kRecordOvr, kRecordVer)) {
@@ -829,6 +883,8 @@ void WeightManager::Load(SKSE::SerializationInterface* a_intf) {
             _bodyMode = static_cast<BodyMode>(bm);
         } else if (type == kRecordScl) {
             a_intf->ReadRecordData(_morphScale);
+        } else if (type == kRecordOri) {
+            a_intf->ReadRecordData(_presetOrient);
         } else if (type == kRecordFan) {
             a_intf->ReadRecordData(_fantasyRatio);
         } else if (type == kRecordUnu) {
@@ -839,10 +895,15 @@ void WeightManager::Load(SKSE::SerializationInterface* a_intf) {
             a_intf->ReadRecordData(_athleticRatio);
         } else if (type == kRecordKey) {
             a_intf->ReadRecordData(_reRollKey);
+        } else if (type == kRecordFem) {
+            a_intf->ReadRecordData(_femaleBodies);
         } else if (type == kRecordMale) {
             a_intf->ReadRecordData(_maleBodies);
         } else if (type == kRecordMBld) {
             a_intf->ReadRecordData(_maleBuild);
+        } else if (type == kRecordDbg) {
+            a_intf->ReadRecordData(_debugLog);
+            g_debugLog = _debugLog;
         } else if (type == kRecordOvr) {
             std::uint32_t count{};
             a_intf->ReadRecordData(count);
@@ -878,13 +939,17 @@ void WeightManager::Revert() {
     _bodyMode     = BodyMode::kProcedural;
     _bias         = 0.0f;
     _morphScale   = Config::g_defaultMorphScale;
+    _presetOrient = Config::g_defaultPresetOrient;
     _fantasyRatio = Config::g_defaultFantasyRatio;
     _unusualRatio = Config::g_defaultUnusualRatio;
     _breastUnusualRatio = Config::g_defaultBreastUnusualRatio;
     _athleticRatio = Config::g_defaultAthleticRatio;
+    _femaleBodies = Config::g_defaultFemaleBodies;
     _maleBodies   = Config::g_defaultMaleBodies;
     _maleBuild    = Config::g_defaultMaleBuild;
     _reRollKey = Config::g_defaultReRollKey;
+    _debugLog     = Config::g_defaultDebugLog;
+    g_debugLog    = _debugLog;
     _seed         = OBW::CollectEntropy();
     _overrideSeed.clear();
     ClearProcessed();

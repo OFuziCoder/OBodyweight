@@ -1,4 +1,6 @@
 #include "WeightManager.hpp"
+#include "PresetManager.hpp"
+#include "MorphInterface.hpp"
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 #include <Windows.h>   // GetModuleHandleA (CBPC detection)
@@ -12,6 +14,90 @@ constexpr std::string_view kScript{ "OBW_Native" };
 // Generate and return the weight for the actor (without applying it).
 float GetWeight(RE::StaticFunctionTag*, RE::Actor* a_actor) {
     return WeightManager::GetSingleton().GenerateWeight(a_actor);
+}
+
+// Body mode 1 (OBody preset, weight-driven): the slider names of the named OBody preset, parsed
+// on demand from the BodySlide SliderPresets folder. Papyrus passes the name from
+// OBodyNative.GetPresetAssignedToActor and applies each via NiOverride.SetBodyMorph.
+std::vector<RE::BSFixedString> GetPresetSliders(RE::StaticFunctionTag*, RE::BSFixedString a_preset) {
+    std::vector<RE::BSFixedString> out;
+    try {
+        const auto names = PresetManager::GetSingleton().GetSliderNames(a_preset.c_str());
+        out.reserve(names.size());
+        for (const auto& n : names) out.emplace_back(n.c_str());
+    } catch (const std::exception& e) {
+        SKSE::log::error("GetPresetSliders('{}') threw: {}", a_preset.c_str(), e.what());
+    } catch (...) {
+        SKSE::log::error("GetPresetSliders('{}') threw unknown exception", a_preset.c_str());
+    }
+    return out;
+}
+
+// The per-slider morph values for the named preset at this actor's mock weight (aligned 1:1 with
+// GetPresetSliders): faithful lerp(small,big) for weight-supporting sliders, synthesized lean->full
+// for static volume sliders, constant for static shape sliders. SKEE units; never exceeds the
+// preset's own values (no vertex overshoot).
+std::vector<float> GetPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::Actor* a_actor) {
+    try {
+        const float w = WeightManager::GetSingleton().GetPresetWeight(a_actor);
+        return PresetManager::GetSingleton().GetMorphs(a_preset.c_str(), w);
+    } catch (const std::exception& e) {
+        SKSE::log::error("GetPresetMorphs('{}') threw: {}", a_preset.c_str(), e.what());
+    } catch (...) {
+        SKSE::log::error("GetPresetMorphs('{}') threw unknown exception", a_preset.c_str());
+    }
+    return {};
+}
+
+// Body mode 1 — apply the OBody-assigned preset interpolated at the actor's mock weight, ENTIRELY in
+// C++ via the SKEE BodyMorph interface: sets every slider (no Papyrus 128-array cap), drops OBody's
+// own "OBody"-key morphs, re-asserts the "processed" flag, and rebuilds (body + worn armor). Returns
+// false if SKEE is unavailable or the preset wasn't found -> Papyrus falls back to its array path.
+bool ApplyPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::Actor* a_actor,
+                       RE::BSFixedString a_obKey) {
+    try {
+        if (!OBW::g_morph || !a_actor) return false;
+        auto* task = SKSE::GetTaskInterface();
+        if (!task) return false;
+        const float w = WeightManager::GetSingleton().GetPresetWeight(a_actor);
+        auto morphs = PresetManager::GetSingleton().ComputeAll(a_preset.c_str(), w);
+        if (morphs.empty()) return false;
+        const RE::FormID id = a_actor->GetFormID();
+        std::string obKey = a_obKey.c_str();
+        // Do ALL SKEE work on the MAIN thread (morph-store writes AND the geometry rebuild, together):
+        // running it inline on the Papyrus VM thread stalls the game, and splitting the writes from the
+        // rebuild across threads left the body unchanged. One task per actor; the drain throttles the
+        // rate. Re-resolve the actor by FormID in case it unloaded before the task runs.
+        task->AddTask([id, morphs = std::move(morphs), obKey = std::move(obKey)]() {
+            if (!OBW::g_morph) return;
+            auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
+            if (!a) return;
+            for (const auto& [name, val] : morphs)
+                OBW::g_morph->SetMorph(a, name.c_str(), "OBW", val);
+            OBW::g_morph->ClearBodyMorphKeys(a, "OBody");              // remove OBody's contribution
+            OBW::g_morph->SetMorph(a, obKey.c_str(), "OBody", 1.0f);   // re-assert "processed"
+            OBW::g_morph->ApplyBodyMorphs(a, false);                   // rebuild body + worn armor
+        });
+        return true;
+    } catch (const std::exception& e) {
+        SKSE::log::error("ApplyPresetMorphs('{}') threw: {}", a_preset.c_str(), e.what());
+    } catch (...) {
+        SKSE::log::error("ApplyPresetMorphs('{}') threw unknown exception", a_preset.c_str());
+    }
+    return false;
+}
+
+// Debug: write a line from Papyrus into OBodyNGWeight.log — only when debug logging is ON.
+void Log(RE::StaticFunctionTag*, RE::BSFixedString a_msg) {
+    if (OBW::g_debugLog) SKSE::log::info("[PSC] {}", a_msg.c_str());
+}
+
+bool GetDebugLog(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetDebugLog();
+}
+
+void SetDebugLog(RE::StaticFunctionTag*, bool a_on) {
+    WeightManager::GetSingleton().SetDebugLog(a_on);
 }
 
 // Mode: 0=Random, 1=Seeded/Deterministic, 2=NpcDefault
@@ -55,6 +141,14 @@ void SetMorphScale(RE::StaticFunctionTag*, float a_scale) {
     WeightManager::GetSingleton().SetMorphScale(a_scale);
 }
 
+float GetPresetOrient(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetPresetOrient();
+}
+
+void SetPresetOrient(RE::StaticFunctionTag*, float a_strength) {
+    WeightManager::GetSingleton().SetPresetOrient(a_strength);
+}
+
 float GetFantasyRatio(RE::StaticFunctionTag*) {
     return WeightManager::GetSingleton().GetFantasyRatio();
 }
@@ -93,6 +187,14 @@ std::int32_t GetReRollKey(RE::StaticFunctionTag*) {
 
 void SetReRollKey(RE::StaticFunctionTag*, std::int32_t a_key) {
     WeightManager::GetSingleton().SetReRollKey(a_key);
+}
+
+bool GetFemaleBodies(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetFemaleBodies();
+}
+
+void SetFemaleBodies(RE::StaticFunctionTag*, bool a_on) {
+    WeightManager::GetSingleton().SetFemaleBodies(a_on);
 }
 
 bool GetMaleBodies(RE::StaticFunctionTag*) {
@@ -244,6 +346,12 @@ bool HasMorphsApplied(RE::StaticFunctionTag*, RE::Actor* a_actor) {
 
 bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("GetWeight",           kScript, GetWeight);
+    a_vm->RegisterFunction("GetPresetSliders",    kScript, GetPresetSliders);
+    a_vm->RegisterFunction("GetPresetMorphs",     kScript, GetPresetMorphs);
+    a_vm->RegisterFunction("ApplyPresetMorphs",   kScript, ApplyPresetMorphs);
+    a_vm->RegisterFunction("Log",                 kScript, Log);
+    a_vm->RegisterFunction("GetDebugLog",         kScript, GetDebugLog);
+    a_vm->RegisterFunction("SetDebugLog",         kScript, SetDebugLog);
     a_vm->RegisterFunction("GetMode",             kScript, GetMode);
     a_vm->RegisterFunction("SetMode",             kScript, SetMode);
     a_vm->RegisterFunction("GetBias",             kScript, GetBias);
@@ -259,6 +367,8 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("GetVolumeMorph",      kScript, GetVolumeMorph);
     a_vm->RegisterFunction("GetMorphScale",       kScript, GetMorphScale);
     a_vm->RegisterFunction("SetMorphScale",       kScript, SetMorphScale);
+    a_vm->RegisterFunction("GetPresetOrient",     kScript, GetPresetOrient);
+    a_vm->RegisterFunction("SetPresetOrient",     kScript, SetPresetOrient);
     a_vm->RegisterFunction("GetFantasyRatio",     kScript, GetFantasyRatio);
     a_vm->RegisterFunction("SetFantasyRatio",     kScript, SetFantasyRatio);
     a_vm->RegisterFunction("GetUnusualRatio",     kScript, GetUnusualRatio);
@@ -269,6 +379,8 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("SetAthleticRatio",    kScript, SetAthleticRatio);
     a_vm->RegisterFunction("GetReRollKey",        kScript, GetReRollKey);
     a_vm->RegisterFunction("SetReRollKey",        kScript, SetReRollKey);
+    a_vm->RegisterFunction("GetFemaleBodies",     kScript, GetFemaleBodies);
+    a_vm->RegisterFunction("SetFemaleBodies",     kScript, SetFemaleBodies);
     a_vm->RegisterFunction("GetMaleBodies",       kScript, GetMaleBodies);
     a_vm->RegisterFunction("SetMaleBodies",       kScript, SetMaleBodies);
     a_vm->RegisterFunction("GetMaleBuild",        kScript, GetMaleBuild);

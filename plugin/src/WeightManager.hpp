@@ -5,6 +5,7 @@
 #include <random>
 #include <string>
 #include <unordered_set>
+#include "Debug.hpp"
 
 namespace OBW {
 
@@ -15,8 +16,9 @@ enum class WeightMode : std::uint8_t {
 };
 
 enum class BodyMode : std::uint8_t {
-    kProcedural  = 0,  // generate per-part NiOverride morphs — no preset files needed
-    kOBodyPreset = 1,  // let OBody pick the preset; we only set weight
+    kProcedural         = 0,  // generate per-part NiOverride morphs — no preset files needed
+    kOBodyPreset        = 1,  // let OBody pick the preset; we only set weight
+    kProceduralOriented = 2,  // procedural, but each slider blended toward the OBody preset (strength = _presetOrient)
 };
 
 class WeightManager {
@@ -27,6 +29,12 @@ public:
     // value drives the body-size morphs; it is NOT written to the actor's real weight
     // (that would cause neck seams + outfit mismatches — see main.cpp).
     float GenerateWeight(RE::Actor* a_actor);
+
+    // Per-INSTANCE mock weight (0-100) for body mode 1 (OBody preset interpolation): seeded by
+    // the ACTOR formID (so generic NPCs sharing a base still vary) + Bias, honoring Random vs
+    // Seeded via the session seed. NpcDefault returns the actor's real weight (+Bias). This is
+    // what drives PresetManager's lerp between each preset slider's small/big values.
+    float GetPresetWeight(RE::Actor* a_actor);
 
     // Procedural morph generation — no preset files required.
     // GetFrameScore: one call per actor; returns 0-100, bimodal (pushed toward extremes).
@@ -57,6 +65,10 @@ public:
     // Global morph intensity multiplier (1.0 = default). Set from the MCM.
     float         GetMorphScale() const noexcept { return _morphScale; }
     void          SetMorphScale(float s)         { _morphScale = s; }
+    // Preset orientation strength (0.0-1.0) for body mode 2 (Procedural Oriented): how much the OBody
+    // preset pulls the procedural blend per slider (0 = pure procedural, 1 = pure preset). MCM-tunable.
+    float         GetPresetOrient() const noexcept { return _presetOrient; }
+    void          SetPresetOrient(float o)         { _presetOrient = o; }
     // Fraction of NPCs that are "fantasy" (exaggerated). 0.0-1.0. Set from the MCM.
     float         GetFantasyRatio() const noexcept { return _fantasyRatio; }
     void          SetFantasyRatio(float r)         { _fantasyRatio = r; }
@@ -73,6 +85,10 @@ public:
     // Re-roll hotkey (DirectInput scancode). Default 26 = the [ / { key. MCM-bindable.
     std::int32_t  GetReRollKey() const noexcept { return _reRollKey; }
     void          SetReRollKey(std::int32_t k)  { _reRollKey = k; }
+    // Master toggle for the whole female-body feature (morphs). When false, OBW ignores
+    // female NPCs completely (OBody/vanilla handle them). MCM-toggleable, persisted in the cosave.
+    bool          GetFemaleBodies() const noexcept { return _femaleBodies; }
+    void          SetFemaleBodies(bool b)          { _femaleBodies = b; }
     // Master toggle for the whole male-body feature (weight + morphs). When false, OBW
     // ignores male NPCs completely. MCM-toggleable, persisted in the cosave.
     bool          GetMaleBodies() const noexcept { return _maleBodies; }
@@ -81,6 +97,10 @@ public:
     // uniformly, so proportions hold at any value. MCM "Male build".
     float         GetMaleBuild() const noexcept { return _maleBuild; }
     void          SetMaleBuild(float b)         { _maleBuild = b; }
+    // Debug logging master switch (MCM "Debug logging", OFF by default). Mirrors to the cheap
+    // global g_debugLog that the loggers check. Persisted in the cosave.
+    bool          GetDebugLog() const noexcept  { return _debugLog; }
+    void          SetDebugLog(bool b)           { _debugLog = b; g_debugLog = b; }
 
     // Female muscle-tone score 0-100 (athletic roll + snu snu, belly-suppressed) — the
     // same value that drives the muscle morph sliders. Exposed for other mods.
@@ -186,12 +206,15 @@ private:
     BodyMode      _bodyMode{ BodyMode::kProcedural };
     float         _bias{ 0.0f };
     float         _morphScale{ 1.0f };
+    float         _presetOrient{ 0.5f };   // body mode 2 blend strength (0 = pure procedural, 1 = pure preset)
     float         _fantasyRatio{ 0.15f };
     float         _unusualRatio{ 0.06f };
     float         _breastUnusualRatio{ 0.06f };
     float         _athleticRatio{ 0.15f };
+    bool          _femaleBodies{ true };   // process female NPCs at all (morphs)
     bool          _maleBodies{ true };     // process male NPCs at all (weight + morphs)
     float         _maleBuild{ 1.0f };      // player-tunable male build multiplier
+    bool          _debugLog{ false };      // verbose diagnostics (MCM, off by default)
     std::int32_t  _reRollKey{ 26 };  // [ / { key
     std::uint32_t _seed{ 0 };
     mutable std::recursive_mutex                  _mutex;  // guards the containers below
@@ -209,13 +232,16 @@ private:
     static constexpr std::uint32_t kRecordBody = 'BODY';
     static constexpr std::uint32_t kRecordOvr  = 'OVRS';
     static constexpr std::uint32_t kRecordScl  = 'MSCL';
+    static constexpr std::uint32_t kRecordOri  = 'PORI';   // preset-orientation strength (body mode 2)
     static constexpr std::uint32_t kRecordFan  = 'FANR';
     static constexpr std::uint32_t kRecordUnu  = 'UNUS';
     static constexpr std::uint32_t kRecordBUn  = 'BUNU';
     static constexpr std::uint32_t kRecordAth  = 'ATHL';
     static constexpr std::uint32_t kRecordKey  = 'RKEY';
     static constexpr std::uint32_t kRecordMale = 'MALE';
+    static constexpr std::uint32_t kRecordFem  = 'FMLE';   // female-bodies master toggle
     static constexpr std::uint32_t kRecordMBld = 'MBLD';
+    static constexpr std::uint32_t kRecordDbg  = 'DBGL';   // debug-logging toggle
     static constexpr std::uint32_t kRecordVer  = 1;
 };
 

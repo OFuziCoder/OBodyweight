@@ -1,3 +1,25 @@
+Version 1.4.0
+
+New body modes
+- "Procedural Oriented": generated bodies are blended toward each NPC's OBody preset, with an
+  adjustable strength ("Preset orientation") - procedural variety plus the character of your presets.
+- "OBody Presets" is now weight-driven: instead of every NPC that shares a preset looking identical,
+  each NPC gets that preset at its own body weight, and presets with no weight range gain a
+  synthesized lean<->full variation. Works for both auto-distributed and manually-assigned presets.
+  Set "Weight mode" to NPC Default for plain OBody behavior.
+
+Other
+- Per-sex toggles: enable or disable OBW for female and male NPCs independently.
+- More variety in Procedural mode: less repetition, including within the same body type.
+- "Bias" is now a global heavier/leaner dial that affects every mode.
+- MCM reorganized; options grey out when they don't apply to the selected mode.
+- Debug logging toggle (off by default) under a new "Debug" section.
+
+Fixes & performance
+- Faster, more robust morph application; fixes for preset names with non-ASCII characters and a
+  crash/freeze that could occur while applying presets.
+
+
 Version 1.3.0
 
 - Body archetypes: each NPC now gets one of 15 coherent body types (Balanced, Slim, Rectangle,

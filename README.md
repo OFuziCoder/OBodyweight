@@ -7,7 +7,10 @@ BodySlide preset library required, and equipped clothing follows the generated s
 ## Features
 
 - **Procedural body shapes** generated per NPC via SKEE morphs — no preset files needed.
-  Women use CBBE 3BA sliders, men use HIMBO. Magnitudes calibrated to a 1900+ preset library.
+  Women use CBBE 3BA sliders, men use HIMBO. Magnitudes calibrated to real BodySlide presets.
+- **Three body modes** — *Procedural* (fully generated), *OBody Presets* (OBody's own presets,
+  now varied per-NPC by a body weight so NPCs sharing a preset don't look identical), and
+  *Procedural Oriented* (generated, blended toward each NPC's OBody preset by an adjustable amount).
 - **Body archetypes (women)** — each NPC gets one of 15 coherent body types: Balanced, Slim,
   Rectangle, Pear, Top-heavy, Hourglass, Voluptuous, Apple/Soft, BBW, Athletic, Athletic-curvy,
   Obese, Stocky, Petite, Amazon. The archetype drives bust/waist/hips/belly/tone together, so
@@ -30,8 +33,8 @@ BodySlide preset library required, and equipped clothing follows the generated s
   ultra-skinny/ultra-huge (men), disproportionate and atypical.
 - **Re-roll hotkey** (re-bindable, default `[` / `{`) — aim at an NPC for a brand-new body.
   **VR-ready**: in VR it targets the NPC in your HMD gaze, or yourself if nothing is in view.
-- **Male controls** — a master toggle to turn the whole male-body feature on/off (let OBody/
-  vanilla handle men), plus a **Male build** slider to scale male corpulence; all parts scale
+- **Per-sex toggles** — turn the female and male body features on/off independently (let OBody/
+  vanilla handle a sex), plus a **Male build** slider to scale male corpulence; all parts scale
   together so proportions hold.
 - **Clothing refit** — armor built with morphs follows the new shape.
 - **Performance** — distance-aware lazy loading drains the morph queue gradually and
@@ -41,10 +44,12 @@ BodySlide preset library required, and equipped clothing follows the generated s
 
 ## MCM
 
-Distribution mode (Seeded / Random / NPC Default), Bias, Seed, Morph intensity (master),
-**Fantasy NPCs %**, **Unusual bodies %**, **Unusual breasts %**, **Athletic women %**, a
-Body Shape mode (Procedural Morphs / OBody Presets), a **Male bodies** on/off toggle, a
-**Male build** scale, and a re-bindable **Re-roll key**.
+Generation mode (Procedural Morphs / OBody Presets / Procedural Oriented), Weight mode
+(Seeded / Random / NPC Default), **Bias** (global heavier/leaner), **Female bodies** /
+**Male bodies** toggles, **Male build**, **Morph intensity**, **Fantasy NPCs %**,
+**Unusual bodies %**, **Unusual breasts %**, **Athletic women %**, **Preset orientation**
+(Oriented mode), Seed, a re-bindable **Re-roll key**, and a **Debug logging** toggle. Options
+grey out when they don't apply to the selected mode.
 
 ## Requirements
 
@@ -67,8 +72,10 @@ re-bindable in the MCM) only triggers this mod.
 ## How it works
 
 OBody (which has both female and male preset databases) fires its actor-generated event; this
-mod clears OBody's morphs and applies its own under key `OBW`, branching on sex. In OBody
-Presets mode it leaves OBody's presets alone and only randomizes weight.
+mod applies its own body morphs under key `OBW`, branching on sex. In **Procedural** mode it
+generates the shape directly. In **OBody Presets** mode it re-applies OBody's chosen preset at a
+per-NPC body weight (so NPCs sharing a preset vary, and weightless presets get a synthesized
+lean↔full range). **Procedural Oriented** blends the generated shape toward that preset.
 
 ## Compatibility
 

@@ -2,9 +2,11 @@ Scriptname OBW_MCM extends SKI_ConfigBase
 
 int _modeOption     = -1
 int _bodyOption     = -1
+int _femaleOption   = -1
 int _maleOption     = -1
 int _maleBuildOption = -1
 int _scaleOption    = -1
+int _orientOption   = -1
 int _fantasyOption  = -1
 int _unusualOption  = -1
 int _bUnusualOption = -1
@@ -14,6 +16,7 @@ int _reprocessOption = -1
 int _biasOption     = -1
 int _seedOption     = -1
 int _reseedOption   = -1
+int _debugOption    = -1
 
 string[] _modeLabels
 string[] _bodyLabels
@@ -26,49 +29,105 @@ Event OnConfigInit()
     _modeLabels[1] = "Seeded (Deterministic)"
     _modeLabels[2] = "NPC Default (disabled)"
 
-    _bodyLabels = new string[2]
+    _bodyLabels = new string[3]
     _bodyLabels[0] = "Procedural Morphs"
     _bodyLabels[1] = "OBody Presets"
+    _bodyLabels[2] = "Procedural Oriented"
 EndEvent
 
 Event OnPlayerLoadGame()
 EndEvent
 
+; SkyUI calls this on EVERY game load (including existing saves). OnPlayerLoadGame does NOT fire on
+; Quest scripts, so this is the reliable place to (re)start OBW_Quest's persistent manual-assign poll.
+Event OnGameReload()
+    parent.OnGameReload()
+    OBW_Quest q = Game.GetFormFromFile(0x000800, "OBodyNGWeight.esp") as OBW_Quest
+    if q
+        q.StartPoll()    ; arms the poll first (no Log dependency inside)
+    endif
+    OBW_Native.Log("OnGameReload fired, q=" + q)   ; diagnostic LAST (a Log failure can't block the poll)
+EndEvent
+
 Event OnPageReset(string page)
     SetCursorFillMode(TOP_TO_BOTTOM)
 
-    AddHeaderOption("Distribution Mode")
-    _modeOption = AddMenuOption("Weight mode", _modeLabels[OBW_Native.GetMode()])
-    AddEmptyOption()
+    int gm = OBW_Native.GetBodyMode()    ; 0 Procedural, 1 OBody Presets, 2 Procedural Oriented
+    int wm = OBW_Native.GetMode()        ; 0 Random, 1 Seeded, 2 NPC Default
+    bool fem = OBW_Native.GetFemaleBodies()
+    bool male = OBW_Native.GetMaleBodies()
 
-    AddHeaderOption("Body Shape")
-    _bodyOption = AddMenuOption("Body shape", _bodyLabels[OBW_Native.GetBodyMode()])
-    _maleOption = AddToggleOption("Male bodies", OBW_Native.GetMaleBodies())
-    _maleBuildOption = AddSliderOption("Male build", OBW_Native.GetMaleBuild(), "{2}x")
-    _scaleOption = AddSliderOption("Morph intensity", OBW_Native.GetMorphScale(), "{2}x")
-    _fantasyOption = AddSliderOption("Fantasy NPCs", OBW_Native.GetFantasyRatio() * 100.0, "{0}%")
-    _unusualOption = AddSliderOption("Unusual bodies", OBW_Native.GetUnusualRatio() * 100.0, "{0}%")
-    _bUnusualOption = AddSliderOption("Unusual breasts", OBW_Native.GetBreastUnusualRatio() * 100.0, "{0}%")
-    _athleticOption = AddSliderOption("Athletic women", OBW_Native.GetAthleticRatio() * 100.0, "{0}%")
-    _keyOption = AddKeyMapOption("Re-roll key", OBW_Native.GetReRollKey())
-    AddEmptyOption()
-
-    AddHeaderOption("Weight Adjustment")
-    _biasOption = AddSliderOption("Bias", OBW_Native.GetBias(), "{0}")
-    AddEmptyOption()
-
-    int seedDisabled = OPTION_FLAG_DISABLED
-    if OBW_Native.GetMode() == 1
-        seedDisabled = OPTION_FLAG_NONE
+    ; Grey out what the current mode ignores, so only the relevant options are active.
+    ; Procedural distribution dials: procedural modes (0/2) only — OBody Presets (1) applies presets faithfully.
+    int procFlag = OPTION_FLAG_DISABLED
+    if gm != 1
+        procFlag = OPTION_FLAG_NONE
+    endif
+    ; Female-only procedural dials also need Female bodies on.
+    int femProcFlag = OPTION_FLAG_DISABLED
+    if gm != 1 && fem
+        femProcFlag = OPTION_FLAG_NONE
+    endif
+    ; Male build: procedural male tuning -> procedural mode + Male bodies on.
+    int maleBuildFlag = OPTION_FLAG_DISABLED
+    if gm != 1 && male
+        maleBuildFlag = OPTION_FLAG_NONE
+    endif
+    ; Preset orientation: only Procedural Oriented (2) blends toward the preset.
+    int orientFlag = OPTION_FLAG_DISABLED
+    if gm == 2
+        orientFlag = OPTION_FLAG_NONE
+    endif
+    ; Seed: only meaningful in Seeded weight mode (1).
+    int seedFlag = OPTION_FLAG_DISABLED
+    if wm == 1
+        seedFlag = OPTION_FLAG_NONE
     endif
 
-    AddHeaderOption("Seed (Seeded Mode)")
-    int curSeed = OBW_Native.GetSeed()
-    _seedOption   = AddTextOption("Current seed", curSeed as string, seedDisabled)
-    _reseedOption = AddTextOption("Generate new seed", "[ Click ]", seedDisabled)
+    ; ── LEFT COLUMN: global settings first ──────────────────────────────
+    ; Generation: the two mode selectors + the global size dial (apply to everything).
+    AddHeaderOption("Generation")
+    _bodyOption = AddMenuOption("Generation mode", _bodyLabels[gm])
+    _modeOption = AddMenuOption("Weight mode", _modeLabels[wm])
+    _biasOption = AddSliderOption("Bias (size)", OBW_Native.GetBias(), "{0}")
+    AddEmptyOption()
 
+    ; Sexes: which bodies OBW manages + male-only tuning.
+    AddHeaderOption("Sexes")
+    _femaleOption = AddToggleOption("Female bodies", fem)
+    _maleOption = AddToggleOption("Male bodies", male)
+    _maleBuildOption = AddSliderOption("Male build", OBW_Native.GetMaleBuild(), "{2}x", maleBuildFlag)
+    AddEmptyOption()
+
+    ; Apply & hotkey.
     AddHeaderOption("Apply")
     _reprocessOption = AddTextOption("Reprocess all loaded NPCs", "[ Click ]")
+    _keyOption = AddKeyMapOption("Re-roll key", OBW_Native.GetReRollKey())
+
+    ; ── RIGHT COLUMN: per-mode / distribution settings ──────────────────
+    ; Procedural variety: the distribution dials for the procedural modes (0 / 2).
+    AddHeaderOption("Procedural Variety")
+    _scaleOption = AddSliderOption("Morph intensity", OBW_Native.GetMorphScale(), "{2}x", procFlag)
+    _fantasyOption = AddSliderOption("Fantasy NPCs", OBW_Native.GetFantasyRatio() * 100.0, "{0}%", procFlag)
+    _unusualOption = AddSliderOption("Unusual bodies", OBW_Native.GetUnusualRatio() * 100.0, "{0}%", procFlag)
+    _bUnusualOption = AddSliderOption("Unusual breasts", OBW_Native.GetBreastUnusualRatio() * 100.0, "{0}%", femProcFlag)
+    _athleticOption = AddSliderOption("Athletic women", OBW_Native.GetAthleticRatio() * 100.0, "{0}%", femProcFlag)
+    AddEmptyOption()
+
+    ; OBody preset mode (Procedural Oriented blend strength).
+    AddHeaderOption("OBody Preset Mode")
+    _orientOption = AddSliderOption("Preset orientation", OBW_Native.GetPresetOrient() * 100.0, "{0}%", orientFlag)
+    AddEmptyOption()
+
+    ; Seed (only meaningful in Seeded weight mode).
+    AddHeaderOption("Seed (Seeded Mode)")
+    int curSeed = OBW_Native.GetSeed()
+    _seedOption   = AddTextOption("Current seed", curSeed as string, seedFlag)
+    _reseedOption = AddTextOption("Generate new seed", "[ Click ]", seedFlag)
+    AddEmptyOption()
+
+    AddHeaderOption("Debug")
+    _debugOption = AddToggleOption("Debug logging", OBW_Native.GetDebugLog())
 EndEvent
 
 Event OnOptionMenuOpen(int option)
@@ -86,16 +145,10 @@ EndEvent
 Event OnOptionMenuAccept(int option, int index)
     if option == _modeOption
         OBW_Native.SetMode(index)
-        SetMenuOptionValue(_modeOption, _modeLabels[index])
-        int seedFlag = OPTION_FLAG_NONE
-        if index != 1
-            seedFlag = OPTION_FLAG_DISABLED
-        endif
-        SetOptionFlags(_seedOption,   seedFlag)
-        SetOptionFlags(_reseedOption, seedFlag)
+        ForcePageReset()   ; weight mode gates the Seed group -> redraw to recompute flags
     elseif option == _bodyOption
         OBW_Native.SetBodyMode(index)
-        SetMenuOptionValue(_bodyOption, _bodyLabels[index])
+        ForcePageReset()   ; generation mode gates the procedural / preset / orientation groups
     endif
 EndEvent
 
@@ -115,6 +168,11 @@ Event OnOptionSliderOpen(int option)
         SetSliderDialogDefaultValue(1.0)
         SetSliderDialogRange(0.0, 2.5)
         SetSliderDialogInterval(0.05)
+    elseif option == _orientOption
+        SetSliderDialogStartValue(OBW_Native.GetPresetOrient() * 100.0)
+        SetSliderDialogDefaultValue(50.0)
+        SetSliderDialogRange(0.0, 100.0)
+        SetSliderDialogInterval(5.0)
     elseif option == _fantasyOption
         SetSliderDialogStartValue(OBW_Native.GetFantasyRatio() * 100.0)
         SetSliderDialogDefaultValue(15.0)
@@ -167,6 +225,9 @@ Event OnOptionSliderAccept(int option, float value)
     elseif option == _scaleOption
         OBW_Native.SetMorphScale(value)
         SetSliderOptionValue(_scaleOption, value, "{2}x")
+    elseif option == _orientOption
+        OBW_Native.SetPresetOrient(value / 100.0)
+        SetSliderOptionValue(_orientOption, value, "{0}%")
     elseif option == _fantasyOption
         OBW_Native.SetFantasyRatio(value / 100.0)
         SetSliderOptionValue(_fantasyOption, value, "{0}%")
@@ -188,10 +249,31 @@ Event OnOptionSelect(int option)
         int newSeed = OBW_Native.GetSeed()
         SetTextOptionValue(_seedOption, newSeed as string)
         Debug.Notification("OBodyNG Weight: new seed generated.")
+    elseif option == _femaleOption
+        bool newFem = !OBW_Native.GetFemaleBodies()
+        OBW_Native.SetFemaleBodies(newFem)
+        SetToggleOptionValue(_femaleOption, newFem)
+        ; Female-only procedural dials follow this toggle (and the mode).
+        int ff = OPTION_FLAG_DISABLED
+        if newFem && OBW_Native.GetBodyMode() != 1
+            ff = OPTION_FLAG_NONE
+        endif
+        SetOptionFlags(_bUnusualOption, ff)
+        SetOptionFlags(_athleticOption, ff)
     elseif option == _maleOption
         bool newVal = !OBW_Native.GetMaleBodies()
         OBW_Native.SetMaleBodies(newVal)
         SetToggleOptionValue(_maleOption, newVal)
+        ; Male build follows this toggle (and the mode).
+        int mf = OPTION_FLAG_DISABLED
+        if newVal && OBW_Native.GetBodyMode() != 1
+            mf = OPTION_FLAG_NONE
+        endif
+        SetOptionFlags(_maleBuildOption, mf)
+    elseif option == _debugOption
+        bool newDbg = !OBW_Native.GetDebugLog()
+        OBW_Native.SetDebugLog(newDbg)
+        SetToggleOptionValue(_debugOption, newDbg)
     elseif option == _reprocessOption
         SendModEvent("OBW_Reprocess")   ; OBW_Quest re-queues all loaded NPCs + arms the drain
     endif
@@ -199,15 +281,19 @@ EndEvent
 
 Event OnOptionHighlight(int option)
     if option == _modeOption
-        SetInfoText("Random: NPCs are consistent within a session, but get new values each time you reload a save.\nSeeded: same NPC always gets the same weight for this entire playthrough.\nNPC Default: disables weight randomization.")
+        SetInfoText("Drives the mock weight (body size in procedural modes, preset interpolation in OBody mode).\nRandom: consistent within a session, new values each reload.\nSeeded: same NPC always gets the same weight this playthrough.\nNPC Default: uses the NPC's real weight. In OBody Presets mode this means plain OBody (no OBW weight re-application).")
     elseif option == _bodyOption
-        SetInfoText("Procedural Morphs: generates body shape directly via SKEE — no BodySlide preset library needed.\nOBody Presets: OBody picks the body shape; this mod only randomizes weight.")
+        SetInfoText("Procedural Morphs: fully generated bodies via SKEE; OBody presets ignored.\nOBody Presets: OBody picks the preset, then OBW re-applies it at each NPC's mock weight so NPCs sharing a preset VARY (and presets with no weight range get a synthesized lean<->full axis). Set 'Weight mode' to NPC Default for plain OBody instead.\nProcedural Oriented: generated bodies BLENDED toward each NPC's OBody preset (set the blend with 'Preset orientation').")
+    elseif option == _femaleOption
+        SetInfoText("Master switch for female NPCs. ON: women get OBW's procedural bodies. OFF: OBW ignores women entirely (no morphs) — OBody or vanilla handle them. Lets you run OBW for one sex only, or disable both. Applies to newly generated/re-rolled NPCs.")
     elseif option == _maleOption
-        SetInfoText("Master switch for male NPCs. ON: men get procedural HIMBO bodies + weight, like women. OFF: OBW ignores men entirely (no weight, no morphs) — OBody or vanilla handle them. Applies to newly generated/re-rolled NPCs.")
+        SetInfoText("Master switch for male NPCs. ON: men get procedural HIMBO bodies + weight, like women. OFF: OBW ignores men entirely (no weight, no morphs) — OBody or vanilla handle them. Lets you run OBW for one sex only, or disable both. Applies to newly generated/re-rolled NPCs.")
     elseif option == _maleBuildOption
         SetInfoText("Scales the overall male build (muscle + mass). 1.0 = default. Lower for slimmer men, higher for beefier. All body parts scale together, so proportions stay intact. Applies to newly generated/re-rolled NPCs.")
     elseif option == _scaleOption
         SetInfoText("Master multiplier for procedural morph intensity. 1.0 = calibrated to real BodySlide presets. Affects both realistic and fantasy NPCs. Applies to newly generated/re-rolled NPCs.")
+    elseif option == _orientOption
+        SetInfoText("Only in body mode 'Procedural Oriented': how strongly each NPC's OBody preset pulls the procedural body toward it. 0% = pure procedural (preset ignored), 100% = the preset itself, in between = a blend (preset character + procedural variation & weight). No effect in the other two modes.")
     elseif option == _fantasyOption
         SetInfoText("Percentage of NPCs given exaggerated 'fantasy' bodies (1.3-2.2x). The rest are realistic (~1.0x). 15% = mostly realistic with occasional bombshells; 100% = everyone exaggerated.")
     elseif option == _unusualOption
@@ -219,10 +305,12 @@ Event OnOptionHighlight(int option)
     elseif option == _keyOption
         SetInfoText("Hotkey to re-roll the body of the NPC under your crosshair (Procedural mode). Default is the [ / { key. If it clashes with OBody, set OBody's selection hotkey to None.")
     elseif option == _biasOption
-        SetInfoText("Added to the generated weight before clamping to [0-100]. Positive skews heavier, negative lighter.")
+        SetInfoText("Global heavier(+)/leaner(-) dial. Shifts the mock weight before clamping to [0-100], so it nudges body size everywhere: procedural frame size (modes Procedural / Oriented) and the OBody-preset interpolation (OBody Presets mode).")
     elseif option == _seedOption
         SetInfoText("Unique seed for this playthrough. Same seed = same weight distribution across sessions.")
     elseif option == _reseedOption
         SetInfoText("Generates a new random seed. Already-processed NPCs keep their current values — only new NPCs use the new seed.")
+    elseif option == _debugOption
+        SetInfoText("Writes detailed per-NPC diagnostics to OBodyNGWeight.log (preset applied, load/poll events). OFF by default. Turn it ON only when troubleshooting — it bloats the log in crowded areas. Warnings and errors are always logged.")
     endif
 EndEvent

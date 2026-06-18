@@ -19,6 +19,10 @@ string[] Property Pages auto
 Event OnConfigInit()
 EndEvent
 
+; Called by SkyUI on EVERY game load (fires reliably even on existing saves)
+Event OnGameReload()
+EndEvent
+
 ; Called when a page tab is selected
 Event OnPageReset(string page)
 EndEvent

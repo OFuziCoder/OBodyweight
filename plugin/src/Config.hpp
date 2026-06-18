@@ -6,16 +6,22 @@ namespace OBW::Config {
 // These seed a new game (and Revert); existing saves restore from the cosave instead.
 // A FOMOD installs one of several INI variants (Realistic / Balanced / Fantasy).
 inline float g_defaultMorphScale   = 1.0f;
+inline float g_defaultPresetOrient = 0.5f;   // body mode 2 blend strength (0 = pure procedural, 1 = pure preset)
 inline float g_defaultFantasyRatio = 0.15f;
 inline float g_defaultUnusualRatio       = 0.06f;
 inline float g_defaultBreastUnusualRatio = 0.06f;
 inline float g_defaultAthleticRatio      = 0.15f;
 inline int   g_defaultReRollKey          = 26;  // [ / { key
+// Female bodies: when false, OBW leaves female NPCs entirely alone (no morphs) — OBody /
+// vanilla handle them. Toggleable in the MCM.
+inline bool  g_defaultFemaleBodies       = true;
 // Male bodies: when false, OBW leaves male NPCs entirely alone (no weight, no morphs) —
 // OBody / vanilla handle them. Toggleable in the MCM.
 inline bool  g_defaultMaleBodies         = true;
 // Male build multiplier (1.0 = default). Scales the whole male body uniformly.
 inline float g_defaultMaleBuild          = 1.0f;
+// Debug logging (verbose per-NPC/per-event diagnostics). Off by default; MCM-toggleable.
+inline bool  g_defaultDebugLog           = false;
 
 // Parse the INI. Call once in SKSEPluginLoad, before WeightManager is constructed.
 void Load();
