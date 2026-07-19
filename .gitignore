@@ -28,3 +28,8 @@ dist/
 
 # Editor workspace config (environment-specific)
 .vscode/
+
+# Compiled build outputs — reproducible from plugin/src (DLL via cmake) and Scripts/Source (pex via PapyrusCompiler).
+# The release zip carries these; the repo stays source-only.
+SKSE/Plugins/OBodyNGWeight.dll
+Scripts/*.pex
