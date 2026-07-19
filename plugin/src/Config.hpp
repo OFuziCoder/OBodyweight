@@ -17,10 +17,28 @@ inline float g_defaultFantasyRatio = 0.15f;
 inline float g_defaultUnusualRatio       = 0.06f;
 inline float g_defaultBreastUnusualRatio = 0.06f;
 inline float g_defaultAthleticRatio      = 0.15f;
+// Race coherence strength (0 = off/uniform archetype distribution, 1 = full race-typed). Biases which
+// body archetypes each race trends toward (Orc big/broad, Bosmer petite, Altmer slim, Elder soft...).
+inline float g_defaultRaceCoherence      = 1.0f;
+// Natural-body ratio: fraction of women given the BHUNP-derived "natural" body profile (moderate/wider/
+// lower/closer bust with drape, less-cinched wider waist, softer belly). 0.0-1.0. A natural<->curvy axis.
+inline float g_defaultNaturalRatio       = 0.20f;
+// Curvy-body ratio: fraction of women given the 3BA-style curvier profile (the opposite pole of Natural). For
+// BHUNP users who want some exaggerated bodies. 0.0-1.0. Off by default (CBBE users already have curvy default).
+inline float g_defaultCurvyRatio         = 0.0f;
+// Base body the setup renders: 0 = Auto-detect (from the load order), 1 = CBBE (3BA), 2 = BHUNP. Gates which
+// realism toggle the MCM surfaces (Natural for CBBE, Curvy for BHUNP).
+inline int   g_defaultBaseBody           = 0;
+// Clothed refit: OBW's own dressed-vs-nude body trim on the soft sliders (breasts/butt/belly), 0.0-0.5.
+// The desirable half of OBody's ORefit, owned by OBW. 0 = off (dressed body == nude body).
+inline float g_defaultClothedRefit       = 0.10f;
 inline int   g_defaultReRollKey          = 26;  // [ / { key
 // Per-NPC exclusion hotkey (DirectInput scancode; 0 = unbound). Aim at an NPC + press to toggle its OBW
 // exclusion. Loaded from the INI at launch; MCM-bindable (SetExcludeKey rewrites the INI so it persists).
 inline int   g_excludeKey                = 0;
+// Body-preset EXPORT hotkey (DirectInput scancode; 0 = unbound). Aim at an actor (or at no one = yourself)
+// + press to write their applied OBW body as a BodySlide SliderPresets .xml. INI-persisted, MCM-bindable.
+inline int   g_exportKey                 = 0;
 // Female bodies: when false, OBW leaves female NPCs entirely alone (no morphs) — OBody /
 // vanilla handle them. Toggleable in the MCM.
 inline bool  g_defaultFemaleBodies       = true;
@@ -58,10 +76,13 @@ bool IsActorExcluded(RE::Actor* a_actor);
 // MCM helpers: checkbox state, toggle (rewrites the MCM file), and the list of NPC-adding plugins.
 bool IsPluginExcluded(const char* a_plugin);
 void SetPluginExcluded(const char* a_plugin, bool a_on);
-// Exclude / re-include a SPECIFIC actor by its base FormID (runtime toggle for a hotkey/MCM); persists to the MCM file.
-void SetActorExcluded(RE::Actor* a_actor, bool a_on);
+// Exclude / re-include a SPECIFIC actor by its base FormID (runtime toggle for a hotkey/MCM); persists to the
+// MCM file. Returns false when the NPC has no durable identity to key (fully runtime-spawned actor: dynamic
+// base AND dynamic reference) — callers must NOT report success then.
+bool SetActorExcluded(RE::Actor* a_actor, bool a_on);
 // Set the per-NPC exclusion hotkey (updates the runtime value + rewrites the INI so it persists).
 void SetExcludeKey(int a_key);
+void SetExportKey(int a_key);
 std::vector<std::string> GetNpcPlugins();
 
 }  // namespace OBW::Config

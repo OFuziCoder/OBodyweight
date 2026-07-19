@@ -22,3 +22,9 @@ tools/
 *.tmp
 Thumbs.db
 desktop.ini
+
+# Local release staging + archives (releases go to Nexus/GitHub Releases, not the repo)
+dist/
+
+# Editor workspace config (environment-specific)
+.vscode/

@@ -1,3 +1,87 @@
+Version 1.5.1
+
+- Big men are finally BIG - without the spiky mesh. Measured 178 real HIMBO BodySlide presets and found
+  OBW's male volume ceiling (a safety cap at ~1.12x) was crushing the muscular top end - real presets
+  routinely push arms to 1.4-1.5x. Only the striking archetypes (Bodybuilder, Powerlifter, Stocky, and
+  the rare "ultra-huge" outlier) gained muscle and scale - the ordinary man in the street is unchanged.
+  And instead of one blanket cap, each male slider now has its own ceiling taken from what real preset
+  authors actually use: arms and back go big freely, while the sliders that visibly break the HIMBO mesh
+  into sharp/pointy vertices when over-pushed (body mass, belly) stop at preset norms.
+- Much faster body application. The whole per-NPC morph set is now applied by the plugin in a single
+  internal batch instead of ~110 individual script calls. Bodies appear near-instantly even in crowded
+  cells, and the script engine is no longer bogged down while a crowd converts.
+- Hotkeys fixed and hardened. The re-roll and exclude-target keys are now handled natively by the plugin:
+  they work the moment a save loads (no more "key does nothing" saves) and respond instantly even while
+  many bodies are being processed. Rebinding in the MCM works as before.
+- Butt sizes are now a true gradation. The butt-slider stack scales per NPC from flat through moderate to
+  gigantic (about 20% / 65% / 15% of women), and the overall butt-to-bust balance was brought back in line
+  with real presets - fixing the "everyone got a huge bottom" lean of 1.5.0's fuller butts.
+- The female volume cap was removed entirely (the proportions themselves keep shapes coherent now);
+  the most exaggerated bodies are free to be exaggerated.
+- BHUNP butts calibrated to BHUNP norms. Measured 475 real BHUNP presets: the UNP-family mesh reads
+  fuller per slider unit than CBBE 3BA, so OBW's 3BA-calibrated butt fullness came out oversized on
+  BHUNP setups. When your base body is BHUNP (auto-detected, or set in the menu), the butt-shape stack
+  is now scaled to BHUNP's own preset norms. CBBE 3BA setups are completely unaffected.
+- Your own character is never touched automatically. OBody also fires its "body generated" event for
+  the player, and OBW could grab it and reshape your character on its own. Now the player's body only
+  ever changes when YOU press the re-roll key (aiming at no one re-rolls yourself, as before). Assign
+  your own body through OBody's menu and it stays yours.
+- ...and old saves are cleaned up automatically. If a previous version already put an OBW body on your
+  character, it is removed the next time the save loads (OBW morphs secretly STACKED with your own OBody
+  preset - that's why your character could look inflated).
+- Your character is now completely off-limits to OBW, period. The old "aim at nothing to re-roll
+  yourself" behavior of the re-roll key is gone - one stray key press could silently reshape your
+  character, and that body then stuck across saves. The re-roll key now only works aiming at an NPC;
+  your own body is set exclusively through OBody's menu ('O'), where it always belonged.
+- Fixed the "boot leg" and the pinched lower butt on big bodies. With the old global cap gone, a few
+  sliders could be pushed past the range the mesh was sculpted for: calves inflating over the ankle
+  (legs looking like boots) and the butt creasing at the bottom center. Each body slider now has its own
+  ceiling measured from what real preset authors actually use (2,143 presets analyzed) - big bodies stay
+  big through the sliders that can take it, and the ones that break the mesh stop right before they do.
+- NEW: export any body as a BodySlide preset. Bind the "Export body preset key" in the menu, aim at
+  someone (or at no one, for your own character) and press it: their current body is saved as a preset
+  file that shows up right in BodySlide's preset list - keep it, refine it, build outfits with it, or
+  share it. Works for women and men, in every body mode.
+- OBody's per-NPC nipple and genital variation is preserved. When OBW took over an NPC's body it wiped
+  ALL of OBody's morphs - including the nipple/genital sliders OBody varies per NPC, so every managed
+  NPC quietly reverted to the identical base shape there. Those sliders are now copied over before the
+  takeover and kept, in every body mode.
+- Exclusion fixes. (1) Excluding a leveled-list NPC (a generic bandit/guard whose base is generated at
+  runtime) silently did nothing while still saying "excluded" - it now keys the exclusion by the placed
+  reference so it actually sticks, and honestly tells you when an NPC is fully dynamic and can only be
+  excluded via its source mod. (2) Exclusion files now also accept the full FormID exactly as xEdit
+  shows it (e.g. FE123ABC) - before, only the local part matched and a pasted xEdit ID silently failed.
+
+Version 1.5.0
+
+- Fuller, rounder butts - no more flat butts on curvy/thick bodies. OBW was only driving the base "Butt"
+  slider and leaving BigButt, AppleCheeks and ButtClassic near zero, so butts read flat next to full thighs.
+  They're now built the way real BodySlide presets do - stacked and scaled together - so a full butt has real
+  volume and keeps its curve into the thigh, even on the thickest bodies. Measured against 2,100 real 3BA
+  presets; the volume cap was also opened up (with the shape held safely below the mesh-break point).
+- New "Natural women" body axis. A share of women get a more natural, less-exaggerated shape (a moderate,
+  wider, lower, closer-set bust with a touch more drape; a less-cinched, wider waist; a softer, not board-flat
+  belly) - a realistic <-> curvy dial derived from BHUNP presets. MCM slider (default 20%).
+- New "Curvy women" body axis - the opposite pole (fuller, perkier, more cinched 3BA-style look), for BHUNP
+  users who want some of that curvier shape. Off by default.
+- Base body aware. A "Base body" setting (Auto / CBBE 3BA / BHUNP) shows the Natural dial to CBBE users and
+  the Curvy dial to BHUNP users. Auto-detects from your load order; both axes work on either body.
+- Clothed vs nude body. An optional "Clothed refit" (default 10%) gently trims the soft areas when an NPC is
+  dressed so clothes sit better, and restores the full body when nude - OBW's own version of the effect, so it
+  survives OBW's re-apply.
+- BHUNP compatibility. OBW now drives both the CBBE-3BA and the BHUNP names for the few sliders that differ,
+  so its bodies apply correctly on either body with no per-NPC setup.
+- Faster body application. Removed a redundant second mesh rebuild per NPC, so bodies apply about twice as
+  fast in the procedural mode, especially in crowded areas.
+
+Version 1.4.8
+
+- OBody can no longer "win" over OBW. OBody NG re-applies its preset not just on cell changes but also
+  whenever an NPC changes clothes (and NPCs do that a lot) - so an OBW body could silently revert to the
+  OBody one until the next area load. OBW now listens for OBody's own "body applied" announcement and
+  immediately re-applies its body on top, every time, in all body modes. Your OBW bodies stick, period.
+  (The player is left alone - whatever you picked in OBody's own menu for yourself is respected.)
+
 Version 1.4.7
 
 - Smoother body loading - no more stutter or "pop". Bodies now apply the way OBody does internally (the

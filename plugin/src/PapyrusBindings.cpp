@@ -5,12 +5,54 @@
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 #include <Windows.h>   // GetModuleHandleA (CBPC detection)
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <filesystem>
+#include <fstream>     // preset export
 
 namespace OBW::PapyrusBindings {
 
 namespace {
 
 constexpr std::string_view kScript{ "OBW_Native" };
+
+std::string ToLowerStr(std::string_view s) {
+    std::string out{ s };
+    std::transform(out.begin(), out.end(), out.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return out;
+}
+
+// OBody NG procedurally varies the nipple/genital sliders per NPC and writes them under its "OBody" morph
+// key. OBW's takeover clears that whole key, and OBW drives none of those sliders itself — so managed NPCs
+// were losing the variation (every body got base-shape intimates). The takeover now COPIES these before the
+// clear and re-writes them after (see the ApplyPresetMorphs / ApplyAllMorphs tasks). Substring match, lower
+// case, covering the 3BA and BHUNP families (NippleSize/NipBGone/AreolaSize/Innieoutie/Labiapuffyness/
+// Cutepuffyness/Clit*/Vagina*/Anus*...).
+bool IsIntimateSlider(std::string_view a_lowerName) {
+    static constexpr std::string_view kPat[] = {
+        "nipple", "nipbgone", "areola", "vagina", "labia", "clit", "innie", "puffy", "anus", "pussy"
+    };
+    for (const auto p : kPat)
+        if (a_lowerName.find(p) != std::string_view::npos) return true;
+    return false;
+}
+
+// Visitor: collect every intimate slider stored under the "OBody" key (defensive to (name,key) arg order).
+class IntimateCollector final : public SKEE::IBodyMorphInterface::MorphValueVisitor {
+public:
+    std::vector<std::pair<std::string, float>> out;
+    void Visit(RE::TESObjectREFR*, const char* a_a, const char* a_b, float a_val) override {
+        if (!a_a || !a_b || a_val == 0.0f) return;
+        const std::string_view sa{ a_a }, sb{ a_b };
+        const char* name = nullptr;
+        if (sb == "OBody")      name = a_a;
+        else if (sa == "OBody") name = a_b;
+        if (!name) return;
+        if (IsIntimateSlider(ToLowerStr(name))) out.emplace_back(name, a_val);
+    }
+};
 
 // Generate and return the weight for the actor (without applying it).
 float GetWeight(RE::StaticFunctionTag*, RE::Actor* a_actor) {
@@ -73,10 +115,19 @@ bool ApplyPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::A
             if (!OBW::g_morph) return;
             auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
             if (!a) return;
-            for (const auto& [name, val] : morphs)
+            // Preserve OBody's procedural nipple/genital variation: copy it out before the clear, and skip
+            // those sliders in OBW's own writes (OBody's value = preset base + its per-NPC randomization —
+            // writing the preset's copy under "OBW" too would double-apply them).
+            IntimateCollector keep;
+            OBW::g_morph->VisitMorphValues(a, keep);
+            for (const auto& [name, val] : morphs) {
+                if (IsIntimateSlider(ToLowerStr(name))) continue;
                 OBW::g_morph->SetMorph(a, name.c_str(), "OBW", val);
+            }
             OBW::g_morph->ClearBodyMorphKeys(a, "OBody");              // remove OBody's contribution
             OBW::g_morph->SetMorph(a, obKey.c_str(), "OBody", 1.0f);   // re-assert "processed"
+            for (const auto& [name, val] : keep.out)                    // restore the intimates OBody rolled
+                OBW::g_morph->SetMorph(a, name.c_str(), "OBody", val);
             OBW::g_morph->ApplyBodyMorphs(a, false);                   // rebuild body + worn armor
             auto& wm = WeightManager::GetSingleton();
             wm.ApplyNeckColor(a);                                       // pull the head tint to the body tone (neck-seam color)
@@ -87,6 +138,103 @@ bool ApplyPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::A
         SKSE::log::error("ApplyPresetMorphs('{}') threw: {}", a_preset.c_str(), e.what());
     } catch (...) {
         SKSE::log::error("ApplyPresetMorphs('{}') threw unknown exception", a_preset.c_str());
+    }
+    return false;
+}
+
+// PROCEDURAL modes (0/2) — apply the ENTIRE per-NPC morph suite in ONE native call (2026-07-15 perf fix).
+// The old path was ~110 Papyrus native calls per NPC (49 female sliders x get+set + male 29 x get+set),
+// which saturated the Papyrus VM time-slice: bodies took seconds to apply in crowded cells and the VM
+// congestion even delayed OnKeyDown (the "re-roll key feels dead" report). Now Papyrus makes ONE call;
+// values are computed here (WeightManager is thread-safe) and ALL SKEE work runs in one main-thread task
+// (same proven pattern as ApplyPresetMorphs above): set morphs -> oriented blend -> drop OBody's morphs ->
+// re-assert "processed" -> clothed-refit delta -> ONE rebuild -> neck color. Returns false when SKEE's C++
+// interface is unavailable -> Papyrus falls back to its old slider-by-slider path.
+bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale, RE::BSFixedString a_obKey) {
+    try {
+        if (!OBW::g_morph || !a_actor) return false;
+        auto* task = SKSE::GetTaskInterface();
+        if (!task) return false;
+        auto& wm = WeightManager::GetSingleton();
+
+        std::vector<std::pair<std::string, float>> morphs;
+        morphs.reserve(56);
+        const float kDef = wm.GetMorphScale() / 100.0f;   // shape sliders: 0-100 value -> SKEE 0-1 x master scale
+
+        if (a_isFemale) {
+            const float T = wm.GetFrameScore(a_actor);
+            auto vol = [&](const char* n) { morphs.emplace_back(n, wm.GetVolumeMorph(a_actor, T, n)); };
+            auto def = [&](const char* n) { morphs.emplace_back(n, wm.GetMorphValue(a_actor, T, n) * kDef); };
+            // Volume (intensity + soft-cap baked in) — mirrors OBW_Quest.ApplyFemaleMorphs exactly.
+            vol("Breasts"); vol("Butt"); vol("Belly"); vol("Hips"); vol("Thighs"); vol("BigButt");
+            vol("Arms"); vol("ForearmSize"); vol("WristSize"); vol("ChubbyArms");
+            vol("CalfSize"); vol("ThighOutsideThicc_v2"); vol("ThighFBThicc_v2"); vol("ChubbyLegs"); vol("BigBelly");
+            // Definition / shape (master scale only).
+            def("Waist"); def("BreastsGone"); def("BreastPerkiness"); def("BreastGravity2"); def("BreastWidth");
+            def("HipBone"); def("ThighInsideThicc_v2"); def("SlimThighs");
+            def("VeraMuscleTones"); def("MuscleAbs"); def("MuscleArms"); def("MuscleLegs");
+            def("MuscleMoreAbs_v2"); def("MuscleMoreArms_v2"); def("MuscleMoreLegs_v2");
+            def("ShoulderWidth"); def("RoundAss"); def("AppleCheeks"); def("ButtClassic"); def("ButtShape2");
+            def("ButtDimples"); def("MuscleButt"); def("BreastsTogether"); def("BreastCleavage"); def("BreastHeight");
+            def("WideWaistLine"); def("ChubbyWaist"); def("BigTorso"); def("ChestWidth"); def("RibsProminance");
+            def("HipForward"); def("LegShapeClassic"); def("BreastTopSlope"); def("BreastSideShape");
+            // BHUNP renamed thigh sliders (absent on 3BA = harmless no-op; one path drives either body).
+            morphs.emplace_back("ThighInnerThicker", wm.GetMorphValue(a_actor, T, "ThighInsideThicc_v2") * kDef);
+            morphs.emplace_back("ThighOuter",        wm.GetVolumeMorph(a_actor, T, "ThighOutsideThicc_v2"));
+            morphs.emplace_back("ThighFBThicker",    wm.GetVolumeMorph(a_actor, T, "ThighFBThicc_v2"));
+        } else {
+            auto vol = [&](const char* n) { morphs.emplace_back(n, wm.GetMaleVolumeMorph(a_actor, n)); };
+            auto def = [&](const char* n) { morphs.emplace_back(n, wm.GetMaleMorphValue(a_actor, n) * kDef); };
+            // Volume (build; intensity + HIMBO soft-cap baked in) — mirrors OBW_Quest.ApplyMaleMorphs.
+            vol("Muscle"); vol("BodyMass"); vol("PecsSize"); vol("PecsWidth");
+            vol("ArmsBiceps"); vol("ArmsShoulders"); vol("ArmsTraps"); vol("ArmsFore");
+            vol("TorsoBackSize"); vol("Chubby"); vol("TorsoBelly"); vol("TorsoBellyLHandles");
+            vol("LegsSize"); vol("LegsThigh"); vol("LegsCalfSize"); vol("ButtBooty"); vol("ButtRoundy");
+            // Definition / shape.
+            def("Lean"); def("PecsFlatten"); def("TorsoShoulderInc"); def("TorsoWaistSize"); def("TorsoWidth");
+            def("TorsoFlatAbs"); def("TorsoVLine"); def("TorsoRibsDefinition");
+            def("TorsoBackShape"); def("TorsoBackDefinition"); def("ArmsTrapsValleys"); def("LegsThinner");
+        }
+
+        // Oriented blend strength (mode 2 only): each OBW slider is pulled toward the OBody preset value.
+        // The preset's "OBody" morphs are read INSIDE the task (main thread), right before we clear them.
+        const float orient = (wm.GetBodyMode() == BodyMode::kProceduralOriented) ? wm.GetPresetOrient() : 0.0f;
+
+        const RE::FormID id = a_actor->GetFormID();
+        std::string obKey = a_obKey.c_str();
+        task->AddTask([id, morphs = std::move(morphs), obKey = std::move(obKey), orient]() {
+            if (!OBW::g_morph) return;
+            auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
+            if (!a) return;
+            for (const auto& [name, val] : morphs) {
+                float v = val;
+                if (orient > 0.0f) {
+                    const float pv = OBW::g_morph->GetMorph(a, name.c_str(), "OBody");
+                    if (pv > 0.0f) v = v * (1.0f - orient) + pv * orient;
+                }
+                OBW::g_morph->SetMorph(a, name.c_str(), "OBW", v);
+            }
+            float wasProcessed = OBW::g_morph->GetMorph(a, obKey.c_str(), "OBody");
+            if (wasProcessed == 0.0f) wasProcessed = 1.0f;
+            // Preserve OBody's procedural nipple/genital variation across the clear (OBW drives none of
+            // those sliders, so without this every managed NPC reverted to base-shape intimates).
+            IntimateCollector keep;
+            OBW::g_morph->VisitMorphValues(a, keep);
+            OBW::g_morph->ClearBodyMorphKeys(a, "OBody");              // remove OBody's contribution
+            OBW::g_morph->SetMorph(a, obKey.c_str(), "OBody", wasProcessed);   // re-assert "processed"
+            for (const auto& [name, val] : keep.out)                    // restore the intimates OBody rolled
+                OBW::g_morph->SetMorph(a, name.c_str(), "OBody", val);
+            auto& wmt = WeightManager::GetSingleton();
+            wmt.ApplyClothedRefit(a, wmt.IsBodyArmorWorn(a), true, false);     // trim delta only; rebuild below
+            OBW::g_morph->ApplyBodyMorphs(a, false);                   // ONE rebuild: body + worn armor
+            wmt.ApplyNeckColor(a);
+            wmt.ScheduleNeckColor(a->GetFormID());
+        });
+        return true;
+    } catch (const std::exception& e) {
+        SKSE::log::error("ApplyAllMorphs threw: {}", e.what());
+    } catch (...) {
+        SKSE::log::error("ApplyAllMorphs threw unknown exception");
     }
     return false;
 }
@@ -249,6 +397,60 @@ float GetAthleticRatio(RE::StaticFunctionTag*) {
 
 void SetAthleticRatio(RE::StaticFunctionTag*, float a_ratio) {
     WeightManager::GetSingleton().SetAthleticRatio(a_ratio);
+}
+
+float GetRaceCoherence(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetRaceCoherence();
+}
+
+void SetRaceCoherence(RE::StaticFunctionTag*, float a_strength) {
+    WeightManager::GetSingleton().SetRaceCoherence(a_strength);
+}
+
+float GetNaturalRatio(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetNaturalRatio();
+}
+
+void SetNaturalRatio(RE::StaticFunctionTag*, float a_ratio) {
+    WeightManager::GetSingleton().SetNaturalRatio(a_ratio);
+}
+
+float GetCurvyRatio(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetCurvyRatio();
+}
+
+void SetCurvyRatio(RE::StaticFunctionTag*, float a_ratio) {
+    WeightManager::GetSingleton().SetCurvyRatio(a_ratio);
+}
+
+std::int32_t GetBaseBodyPref(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetBaseBodyPref();
+}
+
+void SetBaseBodyPref(RE::StaticFunctionTag*, std::int32_t a_pref) {
+    WeightManager::GetSingleton().SetBaseBodyPref(a_pref);
+}
+
+// Resolved base body (0 unknown/ambiguous, 1 CBBE, 2 BHUNP) — the MCM uses this to gate the realism toggles.
+std::int32_t GetBaseBody(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetBaseBody();
+}
+
+float GetClothedRefit(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetClothedRefit();
+}
+
+void SetClothedRefit(RE::StaticFunctionTag*, float a_refit) {
+    WeightManager::GetSingleton().SetClothedRefit(a_refit);
+}
+
+// Re-apply the clothed-refit delta at the actor's CURRENT worn state (force). Called by OBW_Quest right after a
+// full body apply, since the "OBW" morphs were just rebuilt and the trim must be recomputed from them.
+void RefreshClothedRefit(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_rebuild) {
+    if (!a_actor) return;
+    auto& wm = WeightManager::GetSingleton();
+    // a_rebuild=false: only set the trim delta; the caller's own ApplyBody rebuilds once (procedural path).
+    wm.ApplyClothedRefit(a_actor, wm.IsBodyArmorWorn(a_actor), true, a_rebuild);
 }
 
 std::int32_t GetReRollKey(RE::StaticFunctionTag*) {
@@ -434,6 +636,194 @@ RE::Actor* GetVRLookTarget(RE::StaticFunctionTag*) {
     return best;
 }
 
+// ── C++ hotkeys (2026-07-15) ─────────────────────────────────────────────────────────────────────
+// The re-roll + exclude keys moved from Papyrus RegisterForKey to a C++ input sink. Two reasons:
+// (1) reliability — OnPlayerLoadGame never fires on Quest scripts, and OBW_MCM.OnGameReload only armed
+//     the poll (never re-called BindReRollKey), so on some saves the key registration was simply gone
+//     ("OBW key not working"); a C++ sink works the instant a save loads, always.
+// (2) responsiveness — key handling no longer queues behind a congested Papyrus VM (the morph drain).
+// Papyrus OBW_Quest.OnKeyDown is now a no-op stub; the MCM rebind natives keep updating the config the
+// sink reads live, so rebinding needs no re-registration at all. Sink returns kContinue ALWAYS.
+class KeyInputSink final : public RE::BSTEventSink<RE::InputEvent*> {
+public:
+    static KeyInputSink* GetSingleton() {
+        static KeyInputSink s;
+        return &s;
+    }
+
+    RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* a_event,
+                                          RE::BSTEventSource<RE::InputEvent*>*) override {
+        if (!a_event) return RE::BSEventNotifyControl::kContinue;
+        auto* ui = RE::UI::GetSingleton();
+        if (!ui || ui->GameIsPaused() || ui->IsMenuOpen(RE::Console::MENU_NAME))
+            return RE::BSEventNotifyControl::kContinue;   // no game-world hotkeys in menus/console
+
+        auto& wm = WeightManager::GetSingleton();
+        const int reRoll  = wm.GetReRollKey();
+        const int exclude = Config::g_excludeKey;
+        const int exportK = Config::g_exportKey;
+
+        for (RE::InputEvent* e = *a_event; e; e = e->next) {
+            const auto* btn = e->AsButtonEvent();
+            if (!btn || !btn->IsDown() || btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
+            const int key = static_cast<int>(btn->GetIDCode());
+            if (key == exclude && exclude != 0)      HandleExclude();
+            else if (key == exportK && exportK != 0) HandleExport();
+            else if (key == reRoll && reRoll != 0)   HandleReRoll();
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+private:
+    // Desktop: crosshair target; VR: HMD-gaze cone-cast (same helper the Papyrus native used).
+    static RE::Actor* PickTarget() {
+        if (REL::Module::IsVR()) return GetVRLookTarget(nullptr);
+        if (auto* pick = RE::CrosshairPickData::GetSingleton()) {
+            if (auto ptr = pick->targetActor.get(); ptr && ptr->As<RE::Actor>()) return ptr->As<RE::Actor>();
+            if (auto ptr = pick->target.get(); ptr && ptr->As<RE::Actor>())      return ptr->As<RE::Actor>();
+        }
+        return nullptr;
+    }
+
+    // Ask OBW_Quest to drain the morph queue NOW (instead of waiting for the 2s poll).
+    static void ArmDrain() {
+        if (auto* src = SKSE::GetModCallbackEventSource()) {
+            SKSE::ModCallbackEvent ev{ "OBW_Drain", RE::BSFixedString{}, 0.0f, nullptr };
+            src->SendEvent(&ev);
+        }
+    }
+
+    static void HandleReRoll() {
+        RE::Actor* a = PickTarget();
+        // NO player fallback (2026-07-17). "Aim at nothing = re-roll yourself" was a footgun: one stray
+        // press without an NPC under the crosshair silently gave the PLAYER an OBW body — the repeated
+        // "OBW is changing my character on its own" reports. The player's body belongs to OBody's own
+        // menu; OBW never writes to him, full stop.
+        if (!a || a == RE::PlayerCharacter::GetSingleton()) {
+            RE::DebugNotification("OBW: aim at an NPC to re-roll (your own body is set through OBody's menu).");
+            return;
+        }
+        if (OBW::g_debugLog) {
+            const std::string msg = std::string("Regenerating body: ") + a->GetDisplayFullName();
+            RE::DebugNotification(msg.c_str());
+        }
+        WeightManager::GetSingleton().RegenerateActor(a);
+        ArmDrain();
+    }
+
+    // Export the target's applied OBW body as a BodySlide preset .xml (aim at no one = export yourself).
+    // Collects EVERY morph stored under OBW's "OBW" key via SKEE's visitor (so it captures procedural AND
+    // preset-mode bodies, all sliders), and writes a SliderPresets file BodySlide picks up directly (in MO2
+    // the write lands in overwrite). small == big -> the preset reproduces this exact body at any weight.
+    class OBWMorphCollector final : public SKEE::IBodyMorphInterface::MorphValueVisitor {
+    public:
+        std::vector<std::pair<std::string, float>> out;
+        void Visit(RE::TESObjectREFR*, const char* a_a, const char* a_b, float a_val) override {
+            if (!a_a || !a_b || a_val == 0.0f) return;
+            // Defensive to (name,key) argument order: one of the two is the morph KEY — ours is "OBW".
+            const std::string_view sa{ a_a }, sb{ a_b };
+            if (sb == "OBW")      out.emplace_back(sa, a_val);
+            else if (sa == "OBW") out.emplace_back(sb, a_val);
+        }
+    };
+
+    static void HandleExport() {
+        RE::Actor* a = PickTarget();
+        if (!a) a = RE::PlayerCharacter::GetSingleton();
+        if (!a || !OBW::g_morph) return;
+        const RE::FormID id = a->GetFormID();
+        auto* task = SKSE::GetTaskInterface();
+        if (!task) return;
+        task->AddTask([id]() {
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
+            if (!actor || !OBW::g_morph) return;
+
+            OBWMorphCollector col;
+            OBW::g_morph->VisitMorphValues(actor, col);
+            if (col.out.empty()) {
+                std::string msg = std::string("OBW: no OBW body on ") + actor->GetDisplayFullName() + " to export.";
+                RE::DebugNotification(msg.c_str());
+                return;
+            }
+            std::sort(col.out.begin(), col.out.end());
+
+            // Male body if any HIMBO-only slider is present; else female (3BA/BHUNP).
+            bool male = false;
+            for (const auto& [n, v] : col.out) {
+                const std::string ln = ToLowerStr(n);
+                if (ln == "pecssize" || ln == "muscle" || ln == "torsobelly" || ln == "bodymass") { male = true; break; }
+            }
+
+            // Sanitized preset/file name: "OBW - <actor> (<formid>)".
+            std::string who = actor->GetDisplayFullName() ? actor->GetDisplayFullName() : "Actor";
+            std::string safe;
+            for (char c : who)
+                if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' || c == '_') safe += c;
+            if (safe.empty()) safe = "Actor";
+            char idbuf[16];
+            std::snprintf(idbuf, sizeof(idbuf), "%08X", id);
+            const std::string preset = "OBW - " + safe + " (" + idbuf + ")";
+
+            std::error_code ec;
+            const std::filesystem::path dir{ R"(.\Data\CalienteTools\BodySlide\SliderPresets)" };
+            std::filesystem::create_directories(dir, ec);
+            const std::filesystem::path file = dir / (preset + ".xml");
+
+            std::ofstream out(file, std::ios::trunc);
+            if (!out) {
+                RE::DebugNotification("OBW: export FAILED (could not write the preset file).");
+                SKSE::log::error("Export: cannot open '{}'", file.string());
+                return;
+            }
+            out << "<SliderPresets>\n";
+            out << "\t<Preset name=\"" << preset << "\" set=\""
+                << (male ? "HIMBO" : "CBBE 3BBB Body Amazing") << "\">\n";
+            if (male) {
+                out << "\t\t<Group name=\"HIMBO\"/>\n";
+            } else {
+                for (const char* g : { "3BA", "3BBB", "CBBE", "CBBE Bodies",
+                                       "CBBE Vanilla Outfits", "CBBE Vanilla Outfits Physics", "BHUNP 3BBB" })
+                    out << "\t\t<Group name=\"" << g << "\"/>\n";
+            }
+            for (const auto& [name, val] : col.out) {
+                const int pct = static_cast<int>(std::lround(val * 100.0f));
+                if (pct == 0) continue;
+                out << "\t\t<SetSlider name=\"" << name << "\" size=\"big\" value=\""   << pct << "\"/>\n";
+                out << "\t\t<SetSlider name=\"" << name << "\" size=\"small\" value=\"" << pct << "\"/>\n";
+            }
+            out << "\t</Preset>\n</SliderPresets>\n";
+            out.close();
+
+            std::string msg = std::string("OBW: exported '") + preset + "' to BodySlide presets.";
+            RE::DebugNotification(msg.c_str());
+            SKSE::log::info("Export: wrote {} sliders to '{}'", col.out.size(), file.string());
+        });
+    }
+
+    static void HandleExclude() {
+        RE::Actor* a = PickTarget();
+        if (!a || a == RE::PlayerCharacter::GetSingleton()) {
+            RE::DebugNotification("OBW: aim at an NPC to exclude or include it.");
+            return;
+        }
+        const bool nowExcl = !Config::IsActorExcluded(a);
+        if (!Config::SetActorExcluded(a, nowExcl)) {
+            // Fully runtime-spawned NPC (dynamic base AND reference): no durable FormID to persist.
+            RE::DebugNotification("OBW: this NPC is dynamically spawned and can't be excluded by ID - exclude its source mod in the MCM instead.");
+            return;
+        }
+        std::string msg = a->GetDisplayFullName();
+        if (nowExcl) {
+            msg += " excluded from OBW (reload to revert its body).";
+        } else {
+            msg += " included in OBW.";
+            WeightManager::GetSingleton().RegenerateActor(a);
+            ArmDrain();
+        }
+        RE::DebugNotification(msg.c_str());
+    }
+};
+
 void MarkMorphsApplied(RE::StaticFunctionTag*, RE::Actor* a_actor) {
     if (a_actor) WeightManager::GetSingleton().MarkMorphsApplied(a_actor->GetFormID());
 }
@@ -461,6 +851,14 @@ void SetExcludeKey(RE::StaticFunctionTag*, std::int32_t a_key) {
     Config::SetExcludeKey(a_key);
 }
 
+// Body-preset export hotkey (aim + press -> BodySlide SliderPresets .xml). INI-persisted.
+std::int32_t GetExportKey(RE::StaticFunctionTag*) {
+    return Config::g_exportKey;
+}
+void SetExportKey(RE::StaticFunctionTag*, std::int32_t a_key) {
+    Config::SetExportKey(a_key);
+}
+
 bool HasMorphsApplied(RE::StaticFunctionTag*, RE::Actor* a_actor) {
     if (!a_actor) return false;
     return WeightManager::GetSingleton().HasMorphsApplied(a_actor->GetFormID());
@@ -473,6 +871,7 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("GetPresetSliders",    kScript, GetPresetSliders);
     a_vm->RegisterFunction("GetPresetMorphs",     kScript, GetPresetMorphs);
     a_vm->RegisterFunction("ApplyPresetMorphs",   kScript, ApplyPresetMorphs);
+    a_vm->RegisterFunction("ApplyAllMorphs",      kScript, ApplyAllMorphs);
     a_vm->RegisterFunction("Log",                 kScript, Log);
     a_vm->RegisterFunction("GetDebugLog",         kScript, GetDebugLog);
     a_vm->RegisterFunction("SetDebugLog",         kScript, SetDebugLog);
@@ -496,6 +895,8 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("SetActorExcluded",    kScript, SetActorExcluded);
     a_vm->RegisterFunction("GetExcludeKey",       kScript, GetExcludeKey);
     a_vm->RegisterFunction("SetExcludeKey",       kScript, SetExcludeKey);
+    a_vm->RegisterFunction("GetExportKey",        kScript, GetExportKey);
+    a_vm->RegisterFunction("SetExportKey",        kScript, SetExportKey);
     a_vm->RegisterFunction("HasMorphsPending",    kScript, HasMorphsPending);
     a_vm->RegisterFunction("GetBodyMode",         kScript, GetBodyMode);
     a_vm->RegisterFunction("SetBodyMode",         kScript, SetBodyMode);
@@ -515,6 +916,18 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("SetBreastUnusualRatio", kScript, SetBreastUnusualRatio);
     a_vm->RegisterFunction("GetAthleticRatio",    kScript, GetAthleticRatio);
     a_vm->RegisterFunction("SetAthleticRatio",    kScript, SetAthleticRatio);
+    a_vm->RegisterFunction("GetRaceCoherence",    kScript, GetRaceCoherence);
+    a_vm->RegisterFunction("SetRaceCoherence",    kScript, SetRaceCoherence);
+    a_vm->RegisterFunction("GetNaturalRatio",     kScript, GetNaturalRatio);
+    a_vm->RegisterFunction("SetNaturalRatio",     kScript, SetNaturalRatio);
+    a_vm->RegisterFunction("GetCurvyRatio",       kScript, GetCurvyRatio);
+    a_vm->RegisterFunction("SetCurvyRatio",       kScript, SetCurvyRatio);
+    a_vm->RegisterFunction("GetBaseBodyPref",     kScript, GetBaseBodyPref);
+    a_vm->RegisterFunction("SetBaseBodyPref",     kScript, SetBaseBodyPref);
+    a_vm->RegisterFunction("GetBaseBody",         kScript, GetBaseBody);
+    a_vm->RegisterFunction("GetClothedRefit",     kScript, GetClothedRefit);
+    a_vm->RegisterFunction("SetClothedRefit",     kScript, SetClothedRefit);
+    a_vm->RegisterFunction("RefreshClothedRefit", kScript, RefreshClothedRefit);
     a_vm->RegisterFunction("GetReRollKey",        kScript, GetReRollKey);
     a_vm->RegisterFunction("SetReRollKey",        kScript, SetReRollKey);
     a_vm->RegisterFunction("GetFemaleBodies",     kScript, GetFemaleBodies);
@@ -547,6 +960,16 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("HasMorphsApplied",    kScript, HasMorphsApplied);
     SKSE::log::info("OBW: Papyrus bindings registered");
     return true;
+}
+
+// Called from main.cpp at kDataLoaded: install the C++ hotkey sink (re-roll + exclude).
+void InstallInputSink() {
+    if (auto* mgr = RE::BSInputDeviceManager::GetSingleton()) {
+        mgr->AddEventSink(KeyInputSink::GetSingleton());
+        SKSE::log::info("OBW: C++ key input sink installed (re-roll/exclude hotkeys)");
+    } else {
+        SKSE::log::error("OBW: BSInputDeviceManager unavailable — hotkeys NOT installed");
+    }
 }
 
 }  // namespace OBW::PapyrusBindings

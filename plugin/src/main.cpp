@@ -4,7 +4,10 @@
 #include "Config.hpp"
 #include "MorphInterface.hpp"
 
-namespace OBW::PapyrusBindings { bool Register(RE::BSScript::IVirtualMachine*); }
+namespace OBW::PapyrusBindings {
+bool Register(RE::BSScript::IVirtualMachine*);
+void InstallInputSink();   // C++ re-roll/exclude hotkeys (replaces Papyrus RegisterForKey)
+}
 
 namespace {
 // Independent distribution sink: when an NPC's 3D loads in a PROCEDURAL body mode, watch it so the
@@ -29,6 +32,78 @@ public:
         wm.ScheduleNeckColor(actor->GetFormID());
         if (wm.GetBodyMode() == OBW::BodyMode::kOBodyPreset) return RE::BSEventNotifyControl::kContinue;
         wm.WatchForFallback(actor->GetFormID());
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+// Event-driven OBody re-assert (closes the "OBW loses to OBody" race for good). OBody NG announces EVERY
+// morph apply with the "Obody_ApplyMorph" ModEvent, sent right AFTER its ApplyBodyMorphs - including its
+// TESEquipEvent re-applies (outfit changes), which the 3D-load watch never saw: OBW won on load, then the
+// NPC changed clothes, OBody re-applied, and OBody stayed on top until the next load. Now every OBody apply
+// enqueues the actor and the OBW drain (deferred Papyrus poll, off OBody's call stack - the safe pattern)
+// re-applies on top, so OBW always lands LAST.
+// THREADING: in OBody's performance mode this event arrives on OBody's own detached thread -> this sink is
+// queue-only (QueueForMorphs is mutex-guarded; no SKEE/engine work here). Gates (exclusion / body mode /
+// per-sex toggles) are enforced drain-side in OBW_Quest.ApplyMorphs, where they belong.
+// LOOP-SAFE: OBW's re-apply never enters OBody's apply pipeline (SKEE SetMorph only; the preset path
+// unassigns with doNotApplyMorphs=true), so it never re-fires this event.
+class OBodyApplySink final : public RE::BSTEventSink<SKSE::ModCallbackEvent> {
+public:
+    static OBodyApplySink* GetSingleton() {
+        static OBodyApplySink s;
+        return &s;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const SKSE::ModCallbackEvent* a_event,
+                                          RE::BSTEventSource<SKSE::ModCallbackEvent>*) override {
+        if (!a_event || a_event->eventName != "Obody_ApplyMorph")
+            return RE::BSEventNotifyControl::kContinue;
+        auto* actor = a_event->sender ? a_event->sender->As<RE::Actor>() : nullptr;
+        if (!actor) return RE::BSEventNotifyControl::kContinue;
+        if (actor == RE::PlayerCharacter::GetSingleton()) {
+            // The player assigned his own body through OBody: that choice wins. Drop any OBW morphs still
+            // on him (they STACK with the OBody preset otherwise).
+            OBW::WeightManager::GetSingleton().CleanPlayerMorphs();
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        OBW::WeightManager::GetSingleton().QueueForMorphs(actor);
+        return RE::BSEventNotifyControl::kContinue;
+    }
+};
+
+// Clothed-refit sink: OBW's own "dressed vs nude" body adjustment (the desirable half of OBody's ORefit, but on
+// OBW's own key so it survives the re-assert). A body-slot armor equip/unequip on an OBW-managed actor toggles a
+// small negative trim on the soft sliders (dressed) or clears it (nude). LOOP-SAFE: ApplyClothedRefit rebuilds
+// with ApplyBodyMorphs (no armor re-equip -> no new equip event), and it self-gates on the cached clothed state,
+// so OBW's own preset-path re-equip (same state) is a no-op. Deferred to the game thread (equip events can arrive
+// on a worker), where the current worn state is re-read.
+class ClothedRefitSink final : public RE::BSTEventSink<RE::TESEquipEvent> {
+public:
+    static ClothedRefitSink* GetSingleton() {
+        static ClothedRefitSink s;
+        return &s;
+    }
+    RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event,
+                                          RE::BSTEventSource<RE::TESEquipEvent>*) override {
+        if (!a_event || !a_event->actor) return RE::BSEventNotifyControl::kContinue;
+        auto* actor = a_event->actor->As<RE::Actor>();
+        if (!actor || actor == RE::PlayerCharacter::GetSingleton()) return RE::BSEventNotifyControl::kContinue;
+        auto& wm = OBW::WeightManager::GetSingleton();
+        if (wm.GetClothedRefit() <= 0.0f) return RE::BSEventNotifyControl::kContinue;   // feature off
+        if (!wm.IsManaged(actor->GetFormID())) return RE::BSEventNotifyControl::kContinue;  // OBW-managed only
+        // Only BODY-slot (32) armor changes affect the clothed/nude body; ignore weapons/jewelry/etc.
+        auto* form = RE::TESForm::LookupByID(a_event->baseObject);
+        auto* armo = form ? form->As<RE::TESObjectARMO>() : nullptr;
+        if (!armo || !armo->HasPartOf(RE::BGSBipedObjectForm::BipedObjectSlot::kBody))
+            return RE::BSEventNotifyControl::kContinue;
+        const RE::FormID id = actor->GetFormID();
+        if (auto* task = SKSE::GetTaskInterface()) {
+            task->AddTask([id]() {
+                auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
+                if (!a) return;
+                auto& w = OBW::WeightManager::GetSingleton();
+                w.ApplyClothedRefit(a, w.IsBodyArmorWorn(a), false);   // self-gates on the cached state change
+            });
+        }
         return RE::BSEventNotifyControl::kContinue;
     }
 };
@@ -91,6 +166,22 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
                     holder->AddEventSink<RE::TESObjectLoadedEvent>(ActorLoadSink::GetSingleton());
                     SKSE::log::info("OBW: actor-load sink installed (procedural self-distribution)");
                 }
+                // Event-driven re-assert: react to OBody's OWN apply announcements (incl. equip re-applies).
+                if (auto* modEvents = SKSE::GetModCallbackEventSource()) {
+                    modEvents->AddEventSink(OBodyApplySink::GetSingleton());
+                    SKSE::log::info("OBW: Obody_ApplyMorph sink installed (event-driven re-assert)");
+                }
+                // Clothed-refit: OBW's own dressed-vs-nude body trim, driven by body-armor equip changes.
+                if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
+                    holder->AddEventSink<RE::TESEquipEvent>(ClothedRefitSink::GetSingleton());
+                    SKSE::log::info("OBW: clothed-refit equip sink installed");
+                }
+                // C++ hotkeys (re-roll / exclude): work the instant a save loads, immune to VM congestion.
+                OBW::PapyrusBindings::InstallInputSink();
+            } else if (a_msg->type == SKSE::MessagingInterface::kPostLoadGame) {
+                // The player's body belongs to him, unconditionally: strip any stale "OBW" morphs a
+                // previous version (or the retired self-re-roll) left on him.
+                OBW::WeightManager::GetSingleton().CleanPlayerMorphs();
             }
         });
     }
