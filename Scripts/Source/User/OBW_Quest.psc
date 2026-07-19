@@ -4,25 +4,34 @@ Scriptname OBW_Quest extends Quest
 ; Timer is armed on every enqueue (not a persistent heartbeat) so it can never
 ; "die" on a reloaded save where OnInit no longer runs.
 
-int _reRollKey = 26   ; [ / { — overwritten from the plugin on init/load
-int _excludeKey = 0   ; aim + this key toggles one NPC's OBW exclusion (0 = unbound)
+; 2026-07-15: the re-roll/exclude hotkeys moved to a C++ input sink in the plugin (works the instant a
+; save loads; immune to Papyrus VM congestion). This script no longer registers ANY key; it only cleans
+; up stale registrations from older versions. C++ fires the "OBW_Drain" ModEvent after a key action so
+; the drain runs immediately instead of waiting for the 2s poll.
 
 Event OnInit()
     OBodyNative.RegisterForOBodyEvent(self as Quest)
     RegisterForModEvent("OBW_RebindKey", "OnRebindKey")
     RegisterForModEvent("OBW_Reprocess", "OnReprocess")
-    BindReRollKey()
-    BindExcludeKey()
+    RegisterForModEvent("OBW_Drain", "OnDrain")
+    UnregisterForAllKeys()         ; keys are C++ now; drop any stale Papyrus registration
     RegisterForSingleUpdate(2.0)   ; start the persistent manual-assign poll (self-perpetuates)
 EndEvent
 
 Event OnPlayerLoadGame()
+    ; NOTE: never fires on Quest scripts (engine limitation) — kept only as documentation.
+    ; The real per-load re-arm is OBW_MCM.OnGameReload -> StartPoll().
     OBodyNative.RegisterForOBodyEvent(self as Quest)
     RegisterForModEvent("OBW_RebindKey", "OnRebindKey")
     RegisterForModEvent("OBW_Reprocess", "OnReprocess")
-    BindReRollKey()
-    BindExcludeKey()
+    RegisterForModEvent("OBW_Drain", "OnDrain")
+    UnregisterForAllKeys()
     RegisterForSingleUpdate(2.0)   ; start the persistent manual-assign poll (self-perpetuates)
+EndEvent
+
+; C++ hotkey handler asks for an immediate drain (re-roll / include-again just enqueued an actor).
+Event OnDrain(string asEvent, string asStr, float afNum, Form akSender)
+    RegisterForSingleUpdate(0.1)
 EndEvent
 
 ; Fired by the MCM "Reprocess all loaded NPCs" button: re-queue every loaded NPC and arm the drain,
@@ -39,85 +48,38 @@ EndEvent
 ; game load by OBW_MCM.OnGameReload, since OnPlayerLoadGame doesn't fire on Quest scripts.
 Function StartPoll()
     RegisterForSingleUpdate(2.0)   ; arm FIRST so a Log issue can never block the poll
+    RegisterForModEvent("OBW_Drain", "OnDrain")   ; C++ hotkeys ask for an immediate drain via this
+    UnregisterForAllKeys()                         ; keys are C++ now; drop stale registrations on load
     OBW_Native.Log("StartPoll: manual-assign poll armed")
 EndFunction
 
+; LEGACY STUBS — the hotkeys are handled by the C++ input sink now (it reads the current key codes from
+; the config live, so a rebind needs no re-registration). Kept because OBW_MCM still calls BindReRollKey.
 Function BindReRollKey()
-    UnregisterForKey(_reRollKey)
-    _reRollKey = OBW_Native.GetReRollKey()
-    RegisterForKey(_reRollKey)
+    UnregisterForAllKeys()
 EndFunction
 
 Function BindExcludeKey()
-    UnregisterForKey(_excludeKey)
-    _excludeKey = OBW_Native.GetExcludeKey()
-    if _excludeKey != 0
-        RegisterForKey(_excludeKey)
-    endif
+    UnregisterForAllKeys()
 EndFunction
 
-; Aim at an NPC + press the exclude key -> toggle that NPC's OBW exclusion (persisted by FormID).
-Function ToggleExcludeTarget()
-    Actor a
-    if OBW_Native.IsVR()
-        a = OBW_Native.GetVRLookTarget()
-    else
-        a = Game.GetCurrentCrosshairRef() as Actor
-    endif
-    if !a || a == Game.GetPlayer()
-        Debug.Notification("OBW: aim at an NPC to exclude or include it.")
-        return
-    endif
-    bool nowExcl = !OBW_Native.IsExcluded(a)
-    OBW_Native.SetActorExcluded(a, nowExcl)
-    if nowExcl
-        Debug.Notification(a.GetDisplayName() + " excluded from OBW (reload to revert its body).")
-    else
-        Debug.Notification(a.GetDisplayName() + " included in OBW.")
-        OBW_Native.RegenerateActor(a)
-        RegisterForSingleUpdate(0.3)
-    endif
-EndFunction
-
-; Fired by the MCM when the re-roll key is rebound.
+; Fired by the MCM when the re-roll key is rebound. Nothing to re-register (C++ reads the config live).
 Event OnRebindKey(string asEvent, string asStr, float afNum, Form akSender)
-    BindReRollKey()
-    BindExcludeKey()
+    UnregisterForAllKeys()
 EndEvent
 
 Event OnKeyDown(int keyCode)
-    if keyCode == _excludeKey && _excludeKey != 0
-        ToggleExcludeTarget()
-        return
-    endif
-    if keyCode != _reRollKey
-        return
-    endif
-    ; Re-roll works in every mode: procedural (0/2) re-rolls the body; OBody Sim Weight (1) re-rolls the
-    ; mock weight so the preset re-interpolates. (Plain OBody = assign manually via OBody; OBW won't touch it.)
-    ; Pick the target: VR has no crosshair (GetCurrentCrosshairRef is None), so there we
-    ; cone-cast from the HMD gaze in C++; desktop uses the normal crosshair (the cone-cast
-    ; never runs there). Either way, fall back to the player if nothing is targeted.
-    Actor a
-    if OBW_Native.IsVR()
-        a = OBW_Native.GetVRLookTarget()
-    else
-        a = Game.GetCurrentCrosshairRef() as Actor
-    endif
-    if !a
-        a = Game.GetPlayer()
-    endif
-    if !a
-        return
-    endif
-    if OBW_Native.GetDebugLog()
-        Debug.Notification("Regenerating body: " + a.GetDisplayName())
-    endif
-    OBW_Native.RegenerateActor(a)
-    RegisterForSingleUpdate(0.3)   ; arm the drain
+    ; No-op: hotkeys moved to the C++ input sink (see the header comment). A stale registration from an
+    ; old save can still fire this once before UnregisterForAllKeys runs — swallow it.
 EndEvent
 
 Event OnActorGenerated(Actor akActor, string presetName)
+    ; NEVER auto-touch the PLAYER: OBody fires this event for the player too (when its distribution
+    ; includes him), but the player's body is his own — OBW only changes it via the explicit re-roll
+    ; hotkey (C++ arms a one-shot pass through the queue). Same guard exists in C++ QueueForMorphs.
+    if akActor == Game.GetPlayer()
+        return
+    endif
     ; HasMorphsApplied is one-shot: returns true and auto-clears if we just called
     ; UpdateModelWeight(true) for this actor. Suppresses the OBody re-fire loop.
     int gm = OBW_Native.GetBodyMode()
@@ -149,19 +111,17 @@ Event OnUpdate()
     ; more remain. Entering a crowded cell queues many actors at once — draining them
     ; all in one frame (each does ~14 morphs + UpdateModelWeight + armor re-equip)
     ; caused the cell-entry freeze. Spreading the work across ticks removes the hitch.
-    int budget = 2
+    ; Budget cap REMOVED (user request): drain EVERY in-range actor this tick so NPCs convert from OBody to
+    ; OBW immediately instead of ~1-2/sec. ApplyMorphs' internal Utility.Wait yields the VM between NPCs so the
+    ; work still spreads across frames; a very crowded cell may hitch (re-add a cap if so). GetNextMorphActor
+    ; returns the CLOSEST loaded actor WITHIN RADIUS (or None when the queue is empty / all remaining are too far),
+    ; so distant NPCs are still deferred to a later poll.
     int processed = 0
-    while budget > 0
-        ; GetNextMorphActor returns the CLOSEST loaded actor within radius, or None
-        ; if the queue is empty OR all remaining actors are too far (deferred).
-        Actor a = OBW_Native.GetNextMorphActor()
-        if !a
-            budget = 0
-        else
-            ApplyMorphs(a)
-            budget -= 1
-            processed += 1
-        endif
+    Actor a = OBW_Native.GetNextMorphActor()
+    while a
+        ApplyMorphs(a)
+        processed += 1
+        a = OBW_Native.GetNextMorphActor()
     endwhile
 
     if OBW_Native.HasMorphsPending()
@@ -234,6 +194,18 @@ Function ApplyMorphs(Actor akActor)
     ; (read from the same StorageUtil value OBody's DLL uses; default "obody_processed"). Read its value so
     ; we can re-assert it after removing OBody's contribution (so OBody leaves the actor to us).
     string obKey = StorageUtil.GetStringValue(None, "obody_ng_distribution_key", "obody_processed")
+
+    ; FAST PATH (2026-07-15): the WHOLE morph suite in ONE native call. C++ computes every slider and runs
+    ; all SKEE work (set + oriented blend + OBody clear/re-assert + clothed trim + ONE rebuild + neck color)
+    ; in a single main-thread task. Replaces ~110 Papyrus native calls per NPC — the source of the "morphs
+    ; are slow" report. Falls through to the old slider-by-slider path only if SKEE's C++ interface is missing.
+    OBW_Native.MarkMorphsApplied(akActor)   ; suppress OBody's re-fire when the rebuild lands
+    if OBW_Native.ApplyAllMorphs(akActor, isFemale, obKey)
+        OBodyNative.AssignPresetToActor(akActor, "", false, true)   ; unassign preset (bookkeeping only)
+        ApplyPhysicsTier(akActor)
+        return
+    endif
+
     float wasProcessed = NiOverride.GetBodyMorph(akActor, obKey, "OBody")
 
     ; Orientation strength: only body mode 2 (Procedural Oriented) blends toward the OBody preset; 0 = pure.
@@ -270,7 +242,8 @@ Function ApplyMorphs(Actor akActor)
     ; body briefly showed mid-swap = the cell-entry stutter + the visible morph pop). Works clothed or nude.
     ; Same one-shot guard as before so the rebuild doesn't re-fire OBody's distribution loop.
     OBW_Native.MarkMorphsApplied(akActor)
-    OBW_Native.ApplyBody(akActor)               ; g_morph->ApplyBodyMorphs(actor, deferUpdate=true)
+    OBW_Native.RefreshClothedRefit(akActor, false)   ; set dressed-vs-nude trim delta only; ApplyBody rebuilds it below (1 pass)
+    OBW_Native.ApplyBody(akActor)               ; g_morph->ApplyBodyMorphs(actor, deferUpdate=true) - one rebuild for everything
 
     OBW_Native.NormalizeNeckColor(akActor)   ; pull head tint to body tone (neck-seam color fix; no-op if off)
 
@@ -309,6 +282,7 @@ Function ApplyPresetWeighted(Actor akActor)
     ; every slider, drops OBody's "OBody"-key morphs, re-asserts "processed", and rebuilds (body + armor).
     if OBW_Native.ApplyPresetMorphs(preset, akActor, obKey)
         OBodyNative.AssignPresetToActor(akActor, "", false, true)   ; unassign -> poll won't re-inject
+        OBW_Native.RefreshClothedRefit(akActor, true)  ; OBW's own dressed-vs-nude trim
         OBW_Native.Log("preset-weight: applied '" + preset + "' to " + akActor.GetActorBase().GetName())
         return
     endif
@@ -346,6 +320,7 @@ Function ApplyPresetWeighted(Actor akActor)
         OBW_Native.MarkMorphsApplied(akActor)
         NiOverride.UpdateModelWeight(akActor)
     endif
+    OBW_Native.RefreshClothedRefit(akActor, true)  ; OBW's own dressed-vs-nude trim
     OBW_Native.NormalizeNeckColor(akActor)   ; neck-seam color fix (preset PSC-fallback path)
     OBW_Native.Log("preset-weight (PSC fallback): applied '" + preset + "' to " + akActor.GetActorBase().GetName())
 EndFunction
@@ -430,6 +405,14 @@ Function ApplyFemaleMorphs(Actor akActor)
     NiOverride.SetBodyMorph(akActor, "ThighOutsideThicc_v2", "OBW", OBW_Native.GetVolumeMorph(akActor, T, "ThighOutsideThicc_v2"))
     NiOverride.SetBodyMorph(akActor, "ThighFBThicc_v2",      "OBW", OBW_Native.GetVolumeMorph(akActor, T, "ThighFBThicc_v2"))
     NiOverride.SetBodyMorph(akActor, "ChubbyLegs",           "OBW", OBW_Native.GetVolumeMorph(akActor, T, "ChubbyLegs"))
+    ; --- BHUNP body compatibility (2026-07-11 study, docs/BHUNP_COMPAT.md): 40/49 OBW sliders share
+    ; names with BHUNP already; BHUNP just RENAMES a few thigh sliders. Setting a slider that is absent
+    ; from the actor's .tri is a harmless no-op (VERIFIED: CBBE 3BA has no "ThighInnerThicker/ThighOuter/
+    ; ThighFBThicker"), so we set BOTH the 3BA name (above) AND the BHUNP name here -> one path drives
+    ; either body, NO per-actor detection, ZERO change to CBBE 3BA output.
+    NiOverride.SetBodyMorph(akActor, "ThighInnerThicker", "OBW", OBW_Native.GetMorphValue(akActor,  T, "ThighInsideThicc_v2")  * kDef)
+    NiOverride.SetBodyMorph(akActor, "ThighOuter",        "OBW", OBW_Native.GetVolumeMorph(akActor, T, "ThighOutsideThicc_v2"))
+    NiOverride.SetBodyMorph(akActor, "ThighFBThicker",    "OBW", OBW_Native.GetVolumeMorph(akActor, T, "ThighFBThicc_v2"))
     NiOverride.SetBodyMorph(akActor, "BigBelly",             "OBW", OBW_Native.GetVolumeMorph(akActor, T, "BigBelly"))
     ; Shape (master scale only): silhouette + butt shape (heart/round/shelf/dimpled) + breast shape + waistline.
     NiOverride.SetBodyMorph(akActor, "ShoulderWidth",   "OBW", OBW_Native.GetMorphValue(akActor, T, "ShoulderWidth")   * kDef)

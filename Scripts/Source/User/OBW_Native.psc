@@ -17,6 +17,9 @@ float[] Function GetPresetMorphs(string asPreset, Actor akActor) global native
 ; key. Sets the morphs, drops OBody's "OBody"-key morphs, re-asserts "processed", and rebuilds.
 ; Returns false if SKEE is unavailable or the preset wasn't found (caller falls back to the array path).
 bool Function ApplyPresetMorphs(string asPreset, Actor akActor, string asObKey) global native
+; Procedural modes: the WHOLE per-NPC morph suite in one call (set + blend + OBody clear/re-assert +
+; clothed trim + one rebuild + neck color, all in a main-thread task). False = SKEE C++ iface missing.
+bool Function ApplyAllMorphs(Actor akActor, bool abIsFemale, string asObKey) global native
 
 ; Debug: write a line into OBodyNGWeight.log (only when debug logging is ON).
 Function Log(string asMsg) global native
@@ -41,6 +44,9 @@ Function SetActorExcluded(Actor akActor, bool abOn) global native
 ; Per-NPC exclusion hotkey (DirectInput scancode; 0 = unbound). Aim at an NPC + press to toggle its exclusion. MCM-bindable.
 int Function GetExcludeKey() global native
 Function SetExcludeKey(int aiKey) global native
+; Export hotkey: aim at an actor (no one = yourself) + press -> writes the applied body as a BodySlide preset.
+int Function GetExportKey() global native
+Function SetExportKey(int aiKey) global native
 
 ; MCM exclusions. GetNpcPlugins = sorted list of plugins that ADD NPCs (for the checkbox list, capped
 ; at 128). IsPluginExcluded/SetPluginExcluded read/toggle the MCM-managed exclusion of one plugin
@@ -105,6 +111,31 @@ Function SetBreastUnusualRatio(float afRatio) global native
 ; Fraction of athletic FEMALES (visible muscle tone/definition), 0.0-1.0.
 float Function GetAthleticRatio() global native
 Function SetAthleticRatio(float afRatio) global native
+
+; Race coherence strength, 0.0-1.0 (1.0 = full race-typed archetype distribution, 0.0 = race-blind uniform).
+float Function GetRaceCoherence() global native
+Function SetRaceCoherence(float afStrength) global native
+
+; Natural-body ratio, 0.0-1.0: fraction of women given the BHUNP-derived "natural" body profile.
+float Function GetNaturalRatio() global native
+Function SetNaturalRatio(float afRatio) global native
+
+; Curvy-body ratio, 0.0-1.0: fraction given the 3BA-style curvier profile (opposite pole of Natural). For BHUNP users.
+float Function GetCurvyRatio() global native
+Function SetCurvyRatio(float afRatio) global native
+
+; Base-body preference: 0 = Auto-detect, 1 = CBBE (3BA), 2 = BHUNP. Gates which realism toggle the MCM shows.
+int Function GetBaseBodyPref() global native
+Function SetBaseBodyPref(int aiPref) global native
+; Resolved base body (pref if set, else auto-detected): 0 = unknown/ambiguous, 1 = CBBE, 2 = BHUNP.
+int Function GetBaseBody() global native
+
+; Clothed refit, 0.0-0.5: OBW's own dressed-vs-nude body trim on the soft sliders (breasts/butt/belly).
+float Function GetClothedRefit() global native
+Function SetClothedRefit(float afRefit) global native
+; Set/refresh the clothed-refit delta at the actor's current worn state. abRebuild=false only sets the delta
+; (the caller's own ApplyBody rebuilds once); true rebuilds immediately (for standalone re-applies).
+Function RefreshClothedRefit(Actor akActor, bool abRebuild) global native
 
 ; Re-roll key (DirectInput scancode). Default 26 = the [ / { key. Bindable in the MCM.
 int Function GetReRollKey() global native

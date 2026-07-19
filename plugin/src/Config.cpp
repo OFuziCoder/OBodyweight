@@ -37,16 +37,22 @@ void Load() {
     g_defaultUnusualRatio       = std::clamp(ReadFloat("Defaults", "UnusualRatio", 0.06f), 0.0f, 1.0f);
     g_defaultBreastUnusualRatio = std::clamp(ReadFloat("Defaults", "BreastUnusualRatio", 0.06f), 0.0f, 1.0f);
     g_defaultAthleticRatio      = std::clamp(ReadFloat("Defaults", "AthleticRatio", 0.15f), 0.0f, 1.0f);
+    g_defaultRaceCoherence      = std::clamp(ReadFloat("Defaults", "RaceCoherence", 1.0f), 0.0f, 1.0f);
+    g_defaultNaturalRatio       = std::clamp(ReadFloat("Defaults", "NaturalRatio", 0.20f), 0.0f, 1.0f);
+    g_defaultCurvyRatio         = std::clamp(ReadFloat("Defaults", "CurvyRatio", 0.0f), 0.0f, 1.0f);
+    g_defaultBaseBody           = std::clamp(static_cast<int>(ReadFloat("Defaults", "BaseBody", 0.0f)), 0, 2);
+    g_defaultClothedRefit       = std::clamp(ReadFloat("Defaults", "ClothedRefit", 0.10f), 0.0f, 0.5f);
     g_defaultReRollKey          = static_cast<int>(ReadFloat("Defaults", "ReRollKey", 26.0f));
     g_excludeKey                = static_cast<int>(ReadFloat("Defaults", "ExcludeKey", 0.0f));
+    g_exportKey                 = static_cast<int>(ReadFloat("Defaults", "ExportKey", 0.0f));
     g_defaultFemaleBodies       = GetPrivateProfileIntA("Defaults", "FemaleBodies", 1, kIniPath) != 0;
     g_defaultMaleBodies         = GetPrivateProfileIntA("Defaults", "MaleBodies", 1, kIniPath) != 0;
     g_defaultMaleBuild          = std::clamp(ReadFloat("Defaults", "MaleBuild", 1.0f), 0.0f, 2.0f);
     g_defaultDebugLog           = GetPrivateProfileIntA("Defaults", "DebugLog", 0, kIniPath) != 0;
     g_defaultNeckColorFix       = std::clamp(ReadFloat("Defaults", "NeckColorFix", 0.5f), 0.0f, 1.0f);
-    SKSE::log::info("Config: MorphScale={:.2f}, Fantasy={:.2f}, Unusual={:.2f}, BreastUnusual={:.2f}, Athletic={:.2f}, FemaleBodies={}, MaleBodies={}, MaleBuild={:.2f}",
+    SKSE::log::info("Config: MorphScale={:.2f}, Fantasy={:.2f}, Unusual={:.2f}, BreastUnusual={:.2f}, Athletic={:.2f}, RaceCoherence={:.2f}, FemaleBodies={}, MaleBodies={}, MaleBuild={:.2f}",
                     g_defaultMorphScale, g_defaultFantasyRatio, g_defaultUnusualRatio,
-                    g_defaultBreastUnusualRatio, g_defaultAthleticRatio, g_defaultFemaleBodies, g_defaultMaleBodies, g_defaultMaleBuild);
+                    g_defaultBreastUnusualRatio, g_defaultAthleticRatio, g_defaultRaceCoherence, g_defaultFemaleBodies, g_defaultMaleBodies, g_defaultMaleBuild);
 }
 
 namespace {
@@ -97,7 +103,16 @@ void ReadExclusionFile(const std::filesystem::path& a_path, std::unordered_set<s
             std::string plugin = s.substr(0, bar);
             while (!plugin.empty() && std::isspace(static_cast<unsigned char>(plugin.back()))) plugin.pop_back();
             const RE::FormID id = ParseHexId(s.substr(bar + 1));
-            if (!plugin.empty() && id != 0) a_forms.insert(FormKey(plugin, id));
+            if (!plugin.empty() && id != 0) {
+                a_forms.insert(FormKey(plugin, id));
+                // Users paste the FULL load-order FormID xEdit shows ("05123456" / "FE123ABC"), not the local
+                // one this key uses — accept those too. A LOCAL id never has its top byte set (regular plugins
+                // use 24-bit locals, ESLs 12-bit), so a nonzero top byte reliably means "full id": also insert
+                // the masked local (ESL full ids start 0xFE -> low 12 bits; anything else -> low 24 bits).
+                const std::uint32_t top = static_cast<std::uint32_t>(id) >> 24;
+                if (top == 0xFEu)   a_forms.insert(FormKey(plugin, id & 0xFFFu));
+                else if (top != 0u) a_forms.insert(FormKey(plugin, id & 0xFFFFFFu));
+            }
         } else {
             a_names.insert(LowerStr(s));                          // whole plugin
         }
@@ -108,7 +123,8 @@ void WriteMcmExclusionFile() {
     std::ofstream f(kMcmExclFile, std::ios::trunc);
     if (!f) return;
     f << "; OBodyNG Weight - MCM/runtime-managed exclusions (auto-generated).\n";
-    f << "; A plain plugin name excludes the whole .esp/.esl/.esm; 'Plugin.esp|0xLocalFormID' excludes one NPC.\n";
+    f << "; A plain plugin name excludes the whole .esp/.esl/.esm; 'Plugin.esp|0xLocalFormID' excludes one NPC\n";
+    f << "; (the full load-order FormID xEdit shows, e.g. 05123456 or FE123ABC, is accepted too).\n";
     for (const auto& n : g_mcmExcluded)      f << n << "\n";
     for (const auto& k : g_mcmExcludedForms) f << k << "\n";   // already normalized "pluginlower|0xid"
 }
@@ -118,6 +134,11 @@ void WriteMcmExclusionFile() {
 void SetExcludeKey(int a_key) {
     g_excludeKey = a_key;
     WritePrivateProfileStringA("Defaults", "ExcludeKey", std::to_string(a_key).c_str(), kIniPath);
+}
+
+void SetExportKey(int a_key) {
+    g_exportKey = a_key;
+    WritePrivateProfileStringA("Defaults", "ExportKey", std::to_string(a_key).c_str(), kIniPath);
 }
 
 void LoadExclusions() {
@@ -185,16 +206,24 @@ void SetPluginExcluded(const char* a_plugin, bool a_on) {
     WriteMcmExclusionFile();
 }
 
-void SetActorExcluded(RE::Actor* a_actor, bool a_on) {
-    if (!a_actor) return;
+bool SetActorExcluded(RE::Actor* a_actor, bool a_on) {
+    if (!a_actor) return false;
     RE::TESForm* f = a_actor->GetActorBase();   // identify the NPC by its base FormID (per-NPC, not per-placement)
     if (!f) f = a_actor;
     auto* file = f->GetFile(0);                 // origin plugin (the one xEdit shows the FormID under)
-    if (!file) return;
+    if (!file) {
+        // Dynamic base (a leveled-list spawn instances a runtime FF TESNPC with no source file). Fall back to
+        // keying by the placed REFERENCE: refs placed by a plugin have an origin file, and IsActorExcluded
+        // checks the reference's FormKey too, so the exclusion still matches this NPC on every load.
+        f = a_actor;
+        file = f->GetFile(0);
+    }
+    if (!file) return false;                    // fully runtime (spawned ref of a dynamic base) — no durable ID to key
     const std::string key = FormKey(file->GetFilename(), f->GetLocalFormID());
     if (a_on) g_mcmExcludedForms.insert(key);
     else      g_mcmExcludedForms.erase(key);
     WriteMcmExclusionFile();
+    return true;
 }
 
 std::vector<std::string> GetNpcPlugins() {

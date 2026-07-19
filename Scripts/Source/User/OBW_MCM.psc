@@ -8,12 +8,18 @@ int _maleBuildOption = -1
 int _scaleOption    = -1
 int _orientOption   = -1
 int _neckColorOption = -1
+int _clothedRefitOption = -1
 int _fantasyOption  = -1
 int _unusualOption  = -1
 int _bUnusualOption = -1
 int _athleticOption = -1
+int _naturalOption  = -1
+int _curvyOption    = -1
+int _baseBodyOption = -1
+int _raceOption     = -1
 int _keyOption      = -1
 int _exclKeyOption  = -1
+int _exportKeyOption = -1
 int _reprocessOption = -1
 int _biasOption     = -1
 int _seedOption     = -1
@@ -22,6 +28,7 @@ int _debugOption    = -1
 
 string[] _modeLabels
 string[] _bodyLabels
+string[] _baseLabels
 
 string[] _exclPlugins   ; Exclusions page: plugin name per toggle (parallel to _exclOptions) - current page chunk
 int[]    _exclOptions   ; Exclusions page: option ID per plugin
@@ -45,6 +52,11 @@ Event OnConfigInit()
     _bodyLabels[0] = "Procedural Morphs"
     _bodyLabels[1] = "OBody Sim Weight"
     _bodyLabels[2] = "Procedural Oriented"
+
+    _baseLabels = new string[3]
+    _baseLabels[0] = "Auto-detect"
+    _baseLabels[1] = "CBBE (3BA)"
+    _baseLabels[2] = "BHUNP"
 EndEvent
 
 Event OnPlayerLoadGame()
@@ -101,6 +113,18 @@ Event OnPageReset(string page)
         seedFlag = OPTION_FLAG_NONE
     endif
 
+    ; Realism-axis gating by base body (0 auto/unknown, 1 CBBE, 2 BHUNP): Natural (BHUNP-flavor) is for CBBE
+    ; users, Curvy (3BA-flavor) is for BHUNP users. Disable the one that doesn't match the resolved base; show
+    ; both when ambiguous. Both still require procedural mode + Female bodies (femProcFlag).
+    int base = OBW_Native.GetBaseBody()
+    int naturalFlag = femProcFlag
+    int curvyFlag = femProcFlag
+    if base == 2
+        naturalFlag = OPTION_FLAG_DISABLED
+    elseif base == 1
+        curvyFlag = OPTION_FLAG_DISABLED
+    endif
+
     ; ── LEFT COLUMN: global settings first ──────────────────────────────
     ; Generation: the two mode selectors + the global size dial (apply to everything).
     AddHeaderOption("Generation")
@@ -121,6 +145,7 @@ Event OnPageReset(string page)
     _reprocessOption = AddTextOption("Reprocess all loaded NPCs", "[ Click ]")
     _keyOption = AddKeyMapOption("Re-roll key", OBW_Native.GetReRollKey())
     _exclKeyOption = AddKeyMapOption("Exclude target key", OBW_Native.GetExcludeKey())
+    _exportKeyOption = AddKeyMapOption("Export body preset key", OBW_Native.GetExportKey())
 
     ; ── RIGHT COLUMN: per-mode / distribution settings ──────────────────
     ; Procedural variety: the distribution dials for the procedural modes (0 / 2).
@@ -130,6 +155,10 @@ Event OnPageReset(string page)
     _unusualOption = AddSliderOption("Unusual bodies", OBW_Native.GetUnusualRatio() * 100.0, "{0}%", procFlag)
     _bUnusualOption = AddSliderOption("Unusual breasts", OBW_Native.GetBreastUnusualRatio() * 100.0, "{0}%", femProcFlag)
     _athleticOption = AddSliderOption("Athletic women", OBW_Native.GetAthleticRatio() * 100.0, "{0}%", femProcFlag)
+    _naturalOption = AddSliderOption("Natural women", OBW_Native.GetNaturalRatio() * 100.0, "{0}%", naturalFlag)
+    _curvyOption = AddSliderOption("Curvy women", OBW_Native.GetCurvyRatio() * 100.0, "{0}%", curvyFlag)
+    _baseBodyOption = AddMenuOption("Base body", _baseLabels[OBW_Native.GetBaseBodyPref()])
+    _raceOption = AddSliderOption("Race coherence", OBW_Native.GetRaceCoherence() * 100.0, "{0}%", procFlag)
     AddEmptyOption()
 
     ; OBody preset mode (Procedural Oriented blend strength).
@@ -140,6 +169,7 @@ Event OnPageReset(string page)
     ; Appearance (all modes): neck-seam color match - how strongly the head tint is pulled to the body tone.
     AddHeaderOption("Appearance")
     _neckColorOption = AddSliderOption("Neck color match", OBW_Native.GetNeckColorFix() * 100.0, "{0}%")
+    _clothedRefitOption = AddSliderOption("Clothed refit", OBW_Native.GetClothedRefit() * 100.0, "{0}%")
 
     ; Seed (only meaningful in Seeded weight mode).
     AddHeaderOption("Seed (Seeded Mode)")
@@ -194,6 +224,10 @@ Event OnOptionMenuOpen(int option)
         SetMenuDialogOptions(_bodyLabels)
         SetMenuDialogStartIndex(OBW_Native.GetBodyMode())
         SetMenuDialogDefaultIndex(0)
+    elseif option == _baseBodyOption
+        SetMenuDialogOptions(_baseLabels)
+        SetMenuDialogStartIndex(OBW_Native.GetBaseBodyPref())
+        SetMenuDialogDefaultIndex(0)
     endif
 EndEvent
 
@@ -204,6 +238,10 @@ Event OnOptionMenuAccept(int option, int index)
     elseif option == _bodyOption
         OBW_Native.SetBodyMode(index)
         ForcePageReset()   ; generation mode gates the procedural / preset / orientation groups
+    elseif option == _baseBodyOption
+        OBW_Native.SetBaseBodyPref(index)
+        SetMenuOptionValue(_baseBodyOption, _baseLabels[index])
+        ForcePageReset()   ; base body gates which realism toggle (Natural / Curvy) is enabled
     endif
 EndEvent
 
@@ -233,6 +271,11 @@ Event OnOptionSliderOpen(int option)
         SetSliderDialogDefaultValue(50.0)
         SetSliderDialogRange(0.0, 100.0)
         SetSliderDialogInterval(5.0)
+    elseif option == _clothedRefitOption
+        SetSliderDialogStartValue(OBW_Native.GetClothedRefit() * 100.0)
+        SetSliderDialogDefaultValue(10.0)
+        SetSliderDialogRange(0.0, 50.0)
+        SetSliderDialogInterval(1.0)
     elseif option == _fantasyOption
         SetSliderDialogStartValue(OBW_Native.GetFantasyRatio() * 100.0)
         SetSliderDialogDefaultValue(15.0)
@@ -251,6 +294,21 @@ Event OnOptionSliderOpen(int option)
     elseif option == _athleticOption
         SetSliderDialogStartValue(OBW_Native.GetAthleticRatio() * 100.0)
         SetSliderDialogDefaultValue(15.0)
+        SetSliderDialogRange(0.0, 100.0)
+        SetSliderDialogInterval(5.0)
+    elseif option == _naturalOption
+        SetSliderDialogStartValue(OBW_Native.GetNaturalRatio() * 100.0)
+        SetSliderDialogDefaultValue(20.0)
+        SetSliderDialogRange(0.0, 100.0)
+        SetSliderDialogInterval(5.0)
+    elseif option == _curvyOption
+        SetSliderDialogStartValue(OBW_Native.GetCurvyRatio() * 100.0)
+        SetSliderDialogDefaultValue(0.0)
+        SetSliderDialogRange(0.0, 100.0)
+        SetSliderDialogInterval(5.0)
+    elseif option == _raceOption
+        SetSliderDialogStartValue(OBW_Native.GetRaceCoherence() * 100.0)
+        SetSliderDialogDefaultValue(100.0)
         SetSliderDialogRange(0.0, 100.0)
         SetSliderDialogInterval(5.0)
     endif
@@ -281,6 +339,10 @@ Event OnOptionKeyMapChange(int option, int keyCode, string conflictControl, stri
         endif
         int h2 = ModEvent.Create("OBW_RebindKey")
         ModEvent.Send(h2)
+    elseif option == _exportKeyOption
+        OBW_Native.SetExportKey(keyCode)
+        SetKeyMapOptionValue(_exportKeyOption, keyCode)
+        ; No re-registration needed: the C++ key sink reads the configured key live.
     endif
 EndEvent
 
@@ -309,9 +371,21 @@ Event OnOptionSliderAccept(int option, float value)
     elseif option == _athleticOption
         OBW_Native.SetAthleticRatio(value / 100.0)
         SetSliderOptionValue(_athleticOption, value, "{0}%")
+    elseif option == _naturalOption
+        OBW_Native.SetNaturalRatio(value / 100.0)
+        SetSliderOptionValue(_naturalOption, value, "{0}%")
+    elseif option == _curvyOption
+        OBW_Native.SetCurvyRatio(value / 100.0)
+        SetSliderOptionValue(_curvyOption, value, "{0}%")
+    elseif option == _raceOption
+        OBW_Native.SetRaceCoherence(value / 100.0)
+        SetSliderOptionValue(_raceOption, value, "{0}%")
     elseif option == _neckColorOption
         OBW_Native.SetNeckColorFix(value / 100.0)
         SetSliderOptionValue(_neckColorOption, value, "{0}%")
+    elseif option == _clothedRefitOption
+        OBW_Native.SetClothedRefit(value / 100.0)
+        SetSliderOptionValue(_clothedRefitOption, value, "{0}%")
     endif
 EndEvent
 
@@ -334,6 +408,17 @@ Event OnOptionSelect(int option)
         endif
         SetOptionFlags(_bUnusualOption, ff)
         SetOptionFlags(_athleticOption, ff)
+        ; Natural / Curvy also honor the base-body gate (Natural for CBBE, Curvy for BHUNP).
+        int nf = ff
+        int cf = ff
+        int base = OBW_Native.GetBaseBody()
+        if base == 2
+            nf = OPTION_FLAG_DISABLED
+        elseif base == 1
+            cf = OPTION_FLAG_DISABLED
+        endif
+        SetOptionFlags(_naturalOption, nf)
+        SetOptionFlags(_curvyOption, cf)
     elseif option == _maleOption
         bool newVal = !OBW_Native.GetMaleBodies()
         OBW_Native.SetMaleBodies(newVal)
@@ -383,42 +468,54 @@ EndEvent
 
 Event OnOptionHighlight(int option)
     if option == _modeOption
-        SetInfoText("How the per-NPC simulated weight is seeded (drives the preset interpolation in OBody Sim Weight; procedural body sizing has its own seed).\nRandom: re-rolled every session - bodies differ each reload.\nSeeded: fixed for this playthrough - the same NPC always looks the same.\n(For PLAIN OBody on a specific NPC, just assign her preset MANUALLY through OBody's menu - OBW leaves manual assignments untouched.)")
+        SetInfoText("How bodies are decided.\nRandom: every NPC gets her own random body, kept for this playthrough.\nSeeded: one seed decides everyone - the same seed always gives the same bodies, so it can be shared with a friend for an identical world.")
     elseif option == _bodyOption
-        SetInfoText("Procedural Morphs: fully generated bodies via SKEE; OBody presets ignored.\nOBody Sim Weight: OBody picks the preset, then OBW RE-APPLIES it INTERPOLATED at each NPC's weight - so NPCs sharing a preset differ in fullness instead of being clones (presets with no weight range get a synthesized lean<->full axis). It always re-fits the preset - this is NOT plain OBody. (For plain OBody, assign the preset MANUALLY via OBody's menu - OBW leaves manual assignments untouched.)\nProcedural Oriented: generated bodies BLENDED toward each NPC's OBody preset (set the blend with 'Preset orientation').")
+        SetInfoText("Where bodies come from.\nProcedural: fully generated bodies - you need no presets.\nOBody Sim Weight: keeps your OBody presets but varies each NPC's size, so NPCs sharing a preset aren't clones.\nProcedural Oriented: generated bodies nudged toward each NPC's OBody preset (blend set below).")
     elseif option == _femaleOption
-        SetInfoText("Master switch for female NPCs. ON: women get OBW's procedural bodies. OFF: OBW ignores women entirely (no morphs) — OBody or vanilla handle them. Lets you run OBW for one sex only, or disable both. Applies to newly generated/re-rolled NPCs.")
+        SetInfoText("Turn OBW's bodies on or off for women. Off = women are left to OBody or the game. Applies to NPCs that load in from now on.")
     elseif option == _maleOption
-        SetInfoText("Master switch for male NPCs. ON: men get procedural HIMBO bodies + weight, like women. OFF: OBW ignores men entirely (no weight, no morphs) — OBody or vanilla handle them. Lets you run OBW for one sex only, or disable both. Applies to newly generated/re-rolled NPCs.")
+        SetInfoText("Turn OBW's bodies on or off for men. Off = men are left to OBody or the game. Applies to NPCs that load in from now on.")
     elseif option == _maleBuildOption
-        SetInfoText("Scales the overall male build (muscle + mass). 1.0 = default. Lower for slimmer men, higher for beefier. All body parts scale together, so proportions stay intact. Applies to newly generated/re-rolled NPCs.")
+        SetInfoText("Overall size of men's builds. Lower for slimmer men, higher for beefier. Everything scales together so proportions stay natural.")
     elseif option == _scaleOption
-        SetInfoText("Master multiplier for procedural morph intensity. 1.0 = calibrated to real BodySlide presets. Affects both realistic and fantasy NPCs. Applies to newly generated/re-rolled NPCs.")
+        SetInfoText("Overall body size for everyone. 1.0 is the standard look; lower makes bodies smaller, higher makes them bigger.")
     elseif option == _orientOption
-        SetInfoText("Only in body mode 'Procedural Oriented': how strongly each NPC's OBody preset pulls the procedural body toward it. 0% = pure procedural (preset ignored), 100% = the preset itself, in between = a blend (preset character + procedural variation & weight). No effect in the other two modes.")
+        SetInfoText("Only for 'Procedural Oriented' mode: how much each NPC's body leans toward her OBody preset. 0% = fully generated, 100% = the preset itself, in between = a blend.")
     elseif option == _fantasyOption
-        SetInfoText("Percentage of NPCs given exaggerated 'fantasy' bodies (1.3-2.2x). The rest are realistic (~1.0x). 15% = mostly realistic with occasional bombshells; 100% = everyone exaggerated.")
+        SetInfoText("How many NPCs get an exaggerated 'bombshell' body. The rest look natural. 15% = mostly realistic with the occasional bombshell; 100% = everyone exaggerated.")
     elseif option == _unusualOption
-        SetInfoText("Percentage of NPCs with an 'unusual body' — out of the normal distribution. Each is either ultra-petite (tiny) or ultra-thick (huge), with disproportionate, atypical proportions. Rare by default (6%). 0% disables.")
+        SetInfoText("How many NPCs get an unusual, out-of-the-ordinary body - either very tiny or very heavy, with atypical proportions. Rare by default. 0% turns it off.")
     elseif option == _bUnusualOption
-        SetInfoText("Percentage of NPCs with 'unusual breasts' — an extreme outlier: either very saggy or very perky, beyond the normal size-based amount. Independent from Unusual bodies. Rare by default (6%). 0% disables.")
+        SetInfoText("How many NPCs get unusual breasts - either very saggy or very perky, beyond the normal range for their size. Rare by default. 0% turns it off.")
     elseif option == _athleticOption
-        SetInfoText("Percentage of women with athletic muscle tone — visible abs, arm and leg definition. The rest are soft/normal. Belly/softness fades the definition. Default 15%. 0% disables. (Males get muscle tone automatically from their build.)")
+        SetInfoText("How many women have athletic muscle tone - visible abs and definition. The rest are soft or normal. 0% turns it off. (Men get tone from their build automatically.)")
+    elseif option == _naturalOption
+        SetInfoText("How many women get a more natural, less-exaggerated shape: a moderate, wider, lower, closer bust, a softer waist and belly. A realistic look for those who want it. The rest keep the default curvier look.")
+    elseif option == _curvyOption
+        SetInfoText("How many women get a fuller, curvier, more exaggerated shape - the opposite of Natural. For BHUNP users who want some of the curvier look. The rest keep the default. Off by default.")
+    elseif option == _baseBodyOption
+        SetInfoText("Which body you use. It just decides which option is shown: Natural for CBBE / 3BA, Curvy for BHUNP. Leave on Auto-detect unless it guesses wrong, then set it yourself.")
+    elseif option == _clothedRefitOption
+        SetInfoText("A gentle 'dressed vs nude' adjustment. When an NPC is wearing clothes her body is trimmed a little so the clothes sit better; undressed, she has her full body. 0% = dressed and nude look the same.")
+    elseif option == _raceOption
+        SetInfoText("How much an NPC's race shapes her body, so the world feels like Tamriel: Orcs bigger and broader, Bosmer petite, Altmer tall and slim, and so on. The full range is still possible, just rarer. 0% = race makes no difference.")
     elseif option == _keyOption
-        SetInfoText("Hotkey to re-roll the body of the NPC under your crosshair (Procedural mode). Default is the [ / { key. If it clashes with OBody, set OBody's selection hotkey to None.")
+        SetInfoText("Hotkey to give the NPC you're looking at a brand-new random body. Default is the [ key. If it clashes with OBody, set OBody's own key to None.")
     elseif option == _exclKeyOption
-        SetInfoText("Hotkey: aim at an NPC and press to EXCLUDE it from OBW (or re-include it). Excluded NPCs keep their non-OBW body (reload to revert). Default unbound. Same effect as a 'Plugin.esp|0xFormID' line in an OBodyNGWeight_Exclusions file.")
+        SetInfoText("Hotkey: aim at an NPC and press it to leave that one NPC alone (or include her again). Handy for a follower whose body you want to keep. Unbound by default.")
+    elseif option == _exportKeyOption
+        SetInfoText("Hotkey: aim at someone and press it to save their current body as a BodySlide preset file (aiming at no one saves your own). The preset appears in BodySlide's preset list, ready to use or share. Unbound by default.")
     elseif option == _biasOption
-        SetInfoText("Global heavier(+)/leaner(-) dial. Shifts the mock weight before clamping to [0-100], so it nudges body size everywhere: procedural frame size (modes Procedural / Oriented) and the OBody-preset interpolation (OBody Sim Weight mode).")
+        SetInfoText("Makes everyone a little heavier (+) or leaner (-). A quick way to shift overall body size across the whole game.")
     elseif option == _seedOption
-        SetInfoText("Unique seed for this playthrough. Same seed = same weight distribution across sessions.")
+        SetInfoText("The seed for this playthrough. The same seed always produces the same bodies.")
     elseif option == _reseedOption
-        SetInfoText("Generates a new random seed. Already-processed NPCs keep their current values — only new NPCs use the new seed.")
+        SetInfoText("Rolls a new seed. NPCs you've already met keep their bodies; only NPCs you haven't met yet use the new seed.")
     elseif option == _debugOption
-        SetInfoText("Writes detailed per-NPC diagnostics to OBodyNGWeight.log (preset applied, load/poll events). OFF by default. Turn it ON only when troubleshooting — it bloats the log in crowded areas. Warnings and errors are always logged.")
+        SetInfoText("Writes extra detail to the log file. Leave it off - only turn it on if you're troubleshooting a problem.")
     elseif option == _reprocessOption
-        SetInfoText("Re-applies bodies to every NPC loaded around you, without waiting for cell reloads. In RANDOM weight mode it RE-ROLLS them (fresh bodies each click); in SEEDED mode it keeps each body (same seed - just picks up changed settings/physics).")
+        SetInfoText("Re-applies bodies to the NPCs around you right now, without waiting to walk between areas. Use it after changing a setting. (In Random mode it also gives them fresh bodies.)")
     elseif _exclPlugins
-        SetInfoText("Check to EXCLUDE NPCs from this plugin: OBW leaves them to OBody / vanilla / the source mod (no procedural body, no preset re-application). Saved globally across saves. Applies to newly generated NPCs (use Reprocess, or it takes hold as NPCs load).")
+        SetInfoText("Tick a mod to leave its NPCs alone - OBW won't touch them, so custom-bodied followers keep their look. Your choices are remembered across saves.")
     endif
 EndEvent

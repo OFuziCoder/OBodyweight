@@ -95,6 +95,21 @@ generated shape toward that preset.
   `SKSE\Plugins\OBodyNGWeight_Exclusions*.txt` file — merged on game start, so patches can ship
   their own. Case-insensitive.
 
+## FAQ
+
+**"NPCs still get an OBody preset assigned — no matter what I do. Is it broken? Does it assign RaceMenu
+presets?"** No, and no:
+
+- OBW changes the **body** (via OBody). It **never touches RaceMenu / High Poly Head *face* presets** —
+  those are a separate face system. So any face preset you see is unrelated to OBW.
+- In **OBody Sim Weight** mode OBW *keeps* the OBody preset on purpose — it re-applies that preset at a
+  per-NPC simulated weight. That is exactly what gives variety to presets that look identical at weight 0
+  and 100. So a preset *staying assigned* is correct in this mode.
+- For a body generated **from scratch with no preset**, choose **Procedural Morphs** mode. Even then:
+  OBody's own menu may still *display* a preset name (stale — the body underneath is OBW's), presets you
+  assigned **manually** through OBody's menu are deliberately left alone, and distant / just-spawned NPCs
+  are processed lazily (nearest-first). Undress a nearby NPC to see OBW's actual generated body.
+
 ## For mod authors
 
 OBW exposes the generated body type so other plugins can react to it (Papyrus, soft dependency):

@@ -22,6 +22,12 @@ enum class BodyMode : std::uint8_t {
     kProceduralOriented = 2,  // procedural, but each slider blended toward the OBody preset (strength = _presetOrient)
 };
 
+// Per-NPC body-realism flavor (mutually exclusive, one shared roll). Two symmetric variety poles applied on
+// TOP of the archetype: kNatural = the BHUNP-derived realistic profile (for 3BA users who want less-exaggerated
+// bodies); kCurvy = its OPPOSITE pole, the 3BA-style curvier/less-realistic look (for BHUNP users who want some
+// exaggerated bodies). kDefault = neither (the calibrated middle). See NaturalShift/ProfileShift.
+enum class BodyFlavor : std::uint8_t { kDefault = 0, kNatural = 1, kCurvy = 2 };
+
 class WeightManager {
 public:
     static WeightManager& GetSingleton() noexcept;
@@ -101,6 +107,59 @@ public:
     // Fraction of FEMALES that are "athletic" (visible muscle tone/definition). 0.0-1.0.
     float         GetAthleticRatio() const noexcept { return _athleticRatio; }
     void          SetAthleticRatio(float r)         { _athleticRatio = r; }
+    // Race coherence: how strongly an NPC's RACE biases its body-archetype distribution. 0 = off
+    // (uniform, legacy behavior), 1 = full race-typed (Orcs trend Amazon/Strongwoman, Bosmer petite,
+    // Altmer slim, Redguard toned, Elder soft...). Modulates only the archetype selection weights +
+    // a small frame bias, never the RNG stream. MCM-tunable, persisted in the cosave.
+    float         GetRaceCoherence() const noexcept { return _raceCoherence; }
+    void          SetRaceCoherence(float s)         { _raceCoherence = std::clamp(s, 0.0f, 1.0f); }
+    // Natural axis: fraction of women given the BHUNP-derived "natural" body profile (moderate, wider,
+    // lower, closer-together bust with more drape; less-cinched wider waist; softer belly) instead of the
+    // curvier CBBE default. 0 = off. A new variety dimension (natural-realistic <-> curvy-fantasy). Works
+    // on both CBBE 3BA and BHUNP (shared sliders). MCM-tunable, persisted in the cosave.
+    float         GetNaturalRatio() const noexcept { return _naturalRatio; }
+    void          SetNaturalRatio(float r)         { _naturalRatio = std::clamp(r, 0.0f, 1.0f); }
+    // Curvy axis: fraction of women given the 3BA-style curvier/less-realistic profile (the OPPOSITE pole of
+    // Natural: fuller perky forward-set bust, more cinched waist, flatter belly). For BHUNP users who want some
+    // exaggerated 3BA-flavor bodies. Shares the Natural roll (natural + curvy split one uniform, so they never
+    // collide; naturalRatio+curvyRatio clamped to <=1). 0 = off. MCM-tunable, persisted in the cosave.
+    float         GetCurvyRatio() const noexcept { return _curvyRatio; }
+    void          SetCurvyRatio(float r)         { _curvyRatio = std::clamp(r, 0.0f, 1.0f); }
+    // Base-body preference (which body mesh the user's setup renders): 0 = Auto-detect, 1 = CBBE (3BA),
+    // 2 = BHUNP. Gates which realism toggle the MCM shows (Natural for CBBE users, Curvy for BHUNP users).
+    // The axes themselves work on both bodies (shared sliders); this only drives the MCM's relevance gating.
+    int           GetBaseBodyPref() const noexcept { return _baseBodyPref; }
+    void          SetBaseBodyPref(int p)           { _baseBodyPref = std::clamp(p, 0, 2); _baseBodyCache = -1; }
+    // Resolved base body: the preference if set, else auto-detected from the load order (BHUNP vs CBBE
+    // plugins). Returns 0 = unknown/ambiguous (both mods present or neither -> the MCM shows both toggles).
+    int           GetBaseBody() const;
+    // Body-aware butt calibration (2026-07-15): the derived butt stack (BigButt/AppleCheeks/ButtClassic)
+    // was calibrated on 2,100 real CBBE-3BA presets (stack ~153). 475 real BHUNP presets reach the same
+    // look with a ~0.62x stack (mean 94, median 67 — the UNP mesh reads fuller per slider unit), so on a
+    // BHUNP setup the same OBW values would overshoot ~1.4x. This returns the per-body multiplier for the
+    // derived butt sliders: 1.0 on CBBE/ambiguous, ~0.62 on BHUNP. Load order can't change mid-game, so the
+    // resolved body is cached (invalidated when the MCM pref changes).
+    float         FemaleButtScale() const;
+    // Player body ownership (absolute, 2026-07-17): OBW NEVER writes a morph to the player — no auto path,
+    // no hotkey, no opt-in. His body is set exclusively through OBody's own menu. CleanPlayerMorphs strips
+    // any stale "OBW"/"OBWClo" morphs from him (older versions / the retired self-re-roll left them, and
+    // they STACK with his OBody preset) — called after every save load and on the player's own OBody apply.
+    void          CleanPlayerMorphs();
+    // Clothed refit: OBW's own "dressed vs nude" body adjustment (the desirable part of OBody's ORefit, but
+    // owned by OBW so it survives OBW's re-assert). When an OBW-managed actor is DRESSED (body-slot armor worn),
+    // the soft sliders are trimmed by this fraction on a separate "OBWClo" morph key; NUDE clears it. Idempotent
+    // (the delta is recomputed from the full "OBW" value each time), so no drift. 0 = off (dressed == nude).
+    float         GetClothedRefit() const noexcept { return _clothedRefit; }
+    void          SetClothedRefit(float r)         { _clothedRefit = std::clamp(r, 0.0f, 0.5f); }
+    // Apply/clear the clothed-refit delta for an actor at its CURRENT worn state. force = recompute even if the
+    // cached clothed state is unchanged (call after a full body re-apply, which rebuilt the "OBW" morphs). Safe
+    // to call on any thread's task target (does SKEE work -> call on the game thread).
+    void          ApplyClothedRefit(RE::Actor* a_actor, bool a_clothed, bool a_force, bool a_rebuild = true);
+    // True if the actor currently wears body-slot (32) armor.
+    bool          IsBodyArmorWorn(RE::Actor* a_actor) const;
+    // Actor is in OBW's processed set (OBW manages its body) — used by the equip sink to gate.
+    bool          IsManaged(RE::FormID id) const { std::scoped_lock l(_mutex); return _processed.contains(id); }
+
     // Re-roll hotkey (DirectInput scancode). Default 26 = the [ / { key. MCM-bindable.
     std::int32_t  GetReRollKey() const noexcept { return _reRollKey; }
     void          SetReRollKey(std::int32_t k)  { _reRollKey = k; }
@@ -155,7 +214,7 @@ public:
     // Locked: cell-attach (loading thread) and Papyrus VM both touch these containers.
     bool HasProcessed(RE::FormID id) const  { std::scoped_lock l(_mutex); return _processed.contains(id); }
     void MarkProcessed(RE::FormID id)       { std::scoped_lock l(_mutex); _processed.insert(id); }
-    void ClearProcessed()                   { std::scoped_lock l(_mutex); _processed.clear(); _morphQueue.clear(); _fallbackWatch.clear(); }
+    void ClearProcessed()                   { std::scoped_lock l(_mutex); _processed.clear(); _morphQueue.clear(); _fallbackWatch.clear(); _clothedState.clear(); }
 
     // One-shot flag: set before UpdateModelWeight(true), consumed by next OnActorGenerated.
     // Prevents the OBody re-fire loop without blocking future legitimate events.
@@ -198,6 +257,10 @@ public:
 private:
     WeightManager();
 
+    // Classify a_actor's race and publish it (+ the live coherence strength) to the thread-local the
+    // archetype rollers read. Call at the top of every entry point that leads to an archetype roll.
+    void SetRaceCtx(RE::Actor* a_actor) const noexcept;
+
     // Returns the effective seed for an actor: override if present, else formID ^ _seed.
     std::uint32_t GetActorSeed(RE::FormID id) const noexcept {
         auto it = _overrideSeed.find(id);
@@ -229,6 +292,19 @@ private:
         if (std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) >= _athleticRatio) return false;
         return std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) < 0.12f;
     }
+
+    // Per-NPC realism flavor (own RNG stream, independent of athletic/unusual). ONE uniform draw splits the
+    // population: [0,_naturalRatio) natural, [_naturalRatio, +_curvyRatio) curvy, rest default. So natural and
+    // curvy are mutually exclusive and each keeps a stable share. The profile shift is applied per affected
+    // slider in GetMorphValue via ProfileShift.
+    BodyFlavor GetBodyFlavor(RE::FormID id) const {
+        std::mt19937 rng{ GetActorSeed(id) ^ 0x0BA71A70u };
+        const float u = std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
+        if (u < _naturalRatio)                 return BodyFlavor::kNatural;
+        if (u < _naturalRatio + _curvyRatio)   return BodyFlavor::kCurvy;
+        return BodyFlavor::kDefault;
+    }
+    bool IsNatural(RE::FormID id) const { return GetBodyFlavor(id) == BodyFlavor::kNatural; }
     void Save(SKSE::SerializationInterface* a_intf);
     void Load(SKSE::SerializationInterface* a_intf);
     void Revert();
@@ -243,6 +319,13 @@ private:
     float         _unusualRatio{ 0.06f };
     float         _breastUnusualRatio{ 0.06f };
     float         _athleticRatio{ 0.15f };
+    float         _raceCoherence{ 1.0f };  // race-typed archetype distribution strength (0 = off/legacy uniform)
+    float         _naturalRatio{ 0.20f };  // fraction of women given the BHUNP-derived "natural" body profile
+    float         _curvyRatio{ 0.0f };     // fraction given the 3BA-style curvier profile (opposite pole; off by default)
+    int           _baseBodyPref{ 0 };      // 0 auto-detect, 1 CBBE(3BA), 2 BHUNP (gates the MCM toggle relevance)
+    mutable int   _baseBodyCache{ -1 };    // resolved GetBaseBody(), cached (-1 = not resolved yet)
+    float         _clothedRefit{ 0.10f };  // dressed-body trim on the soft sliders (0 = off; OBW's own ORefit)
+    std::unordered_map<RE::FormID, bool> _clothedState;  // runtime cache of last-applied clothed state (not serialized)
     bool          _femaleBodies{ true };   // process female NPCs at all (morphs)
     bool          _maleBodies{ true };     // process male NPCs at all (weight + morphs)
     float         _maleBuild{ 1.0f };      // player-tunable male build multiplier
@@ -272,12 +355,19 @@ private:
     static constexpr std::uint32_t kRecordUnu  = 'UNUS';
     static constexpr std::uint32_t kRecordBUn  = 'BUNU';
     static constexpr std::uint32_t kRecordAth  = 'ATHL';
+    static constexpr std::uint32_t kRecordRace = 'RACE';   // race-coherence strength
+    static constexpr std::uint32_t kRecordNat  = 'NATR';   // natural-body ratio
+    static constexpr std::uint32_t kRecordCrv  = 'CURV';   // curvy-body ratio (3BA-style pole)
+    static constexpr std::uint32_t kRecordBBd  = 'BBDY';   // base-body preference (auto/CBBE/BHUNP)
+    static constexpr std::uint32_t kRecordClo  = 'CLOR';   // clothed-refit strength
     static constexpr std::uint32_t kRecordKey  = 'RKEY';
     static constexpr std::uint32_t kRecordMale = 'MALE';
     static constexpr std::uint32_t kRecordFem  = 'FMLE';   // female-bodies master toggle
     static constexpr std::uint32_t kRecordMBld = 'MBLD';
     static constexpr std::uint32_t kRecordDbg  = 'DBGL';   // debug-logging toggle
     static constexpr std::uint32_t kRecordVer  = 1;
+    // ('POPT' — the short-lived player self-re-roll opt-in — was removed 2026-07-17: the player is never
+    //  OBW-shaped at all now. Old saves carrying the record are fine: unknown types are simply skipped.)
 };
 
 }  // namespace OBW
