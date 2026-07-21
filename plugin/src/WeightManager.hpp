@@ -218,7 +218,26 @@ public:
 
     // One-shot flag: set before UpdateModelWeight(true), consumed by next OnActorGenerated.
     // Prevents the OBody re-fire loop without blocking future legitimate events.
-    void MarkMorphsApplied(RE::FormID id)  { std::scoped_lock l(_mutex); _morphsApplied.insert(id); }
+    void MarkMorphsApplied(RE::FormID id)  { std::scoped_lock l(_mutex); _morphsApplied.insert(id); StampApplyLocked(id); }
+
+    // TIME-WINDOW re-fire suppression (2026-07-20, the "bodies re-apply from time to time" loop): the
+    // Papyrus OnActorGenerated path consumes the one-shot above, but the C++ Obody_ApplyMorph sink used to
+    // queue UNCONDITIONALLY - when OBody echoes anything our own rebuild causes, that path re-fed the queue
+    // forever (visible re-morph on a standing NPC). Two consumers can't share a one-shot, so the sink gets
+    // its own stamp: any Obody_ApplyMorph within the window after OUR apply is our own echo - ignored.
+    void StampApply(RE::FormID id) { std::scoped_lock l(_mutex); StampApplyLocked(id); }
+    void StampApplyLocked(RE::FormID id) {
+        _recentApply[id] = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+    bool RecentlyApplied(RE::FormID id, double a_windowMs = 2500.0) {
+        std::scoped_lock l(_mutex);
+        auto it = _recentApply.find(id);
+        if (it == _recentApply.end()) return false;
+        const double now = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        return (now - it->second) <= a_windowMs;
+    }
     bool HasMorphsApplied(RE::FormID id) {
         std::scoped_lock l(_mutex);
         auto it = _morphsApplied.find(id);
@@ -335,6 +354,7 @@ private:
     mutable std::recursive_mutex                  _mutex;  // guards the containers below
     std::unordered_set<RE::FormID>                _processed;
     std::unordered_set<RE::FormID>                _morphsApplied;
+    std::unordered_map<RE::FormID, double>        _recentApply;     // formID -> steady-clock ms of OUR last apply (re-fire window)
     std::vector<RE::FormID>                       _morphQueue;
     std::unordered_map<RE::FormID, std::uint32_t> _overrideSeed;
     std::unordered_map<RE::FormID, int>           _fallbackWatch;   // id -> grace ticks before self-distributing

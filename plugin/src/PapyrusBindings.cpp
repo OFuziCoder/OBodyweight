@@ -226,7 +226,9 @@ bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale,
                 OBW::g_morph->SetMorph(a, name.c_str(), "OBody", val);
             auto& wmt = WeightManager::GetSingleton();
             wmt.ApplyClothedRefit(a, wmt.IsBodyArmorWorn(a), true, false);     // trim delta only; rebuild below
+            wmt.StampApply(id);                                        // open the re-fire suppression window
             OBW::g_morph->ApplyBodyMorphs(a, false);                   // ONE rebuild: body + worn armor
+            if (OBW::g_debugLog) SKSE::log::info("apply: rebuilt {:08X} '{}'", id, a->GetDisplayFullName());
             wmt.ApplyNeckColor(a);
             wmt.ScheduleNeckColor(a->GetFormID());
         });

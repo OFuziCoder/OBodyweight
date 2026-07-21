@@ -1487,6 +1487,7 @@ int WeightManager::SweepFallback() {
         // puts OBW back on top. The live-queue dedup in QueueForMorphs stops double-queuing within a drain.
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(id);
         if (actor && actor->Is3DLoaded() && !actor->IsDead() && !Config::IsActorExcluded(actor)) {
+            if (OBW::g_debugLog) SKSE::log::info("fallback: grace expired -> queue {:08X}", id);
             QueueForMorphs(actor);
             ++enqueued;
         }
