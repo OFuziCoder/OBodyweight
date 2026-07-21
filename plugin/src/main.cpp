@@ -65,7 +65,18 @@ public:
             OBW::WeightManager::GetSingleton().CleanPlayerMorphs();
             return RE::BSEventNotifyControl::kContinue;
         }
-        OBW::WeightManager::GetSingleton().QueueForMorphs(actor);
+        auto& wm = OBW::WeightManager::GetSingleton();
+        const RE::FormID id = actor->GetFormID();
+        // Re-fire window: an Obody_ApplyMorph landing right after OUR apply is the echo of our own
+        // rebuild, not a genuine OBody distribution - re-queuing it looped the re-assert forever
+        // (the "bodies visibly re-morph from time to time" report). Only the sink needs this guard:
+        // the Papyrus OnActorGenerated path has its own one-shot.
+        if (wm.RecentlyApplied(id)) {
+            if (OBW::g_debugLog) SKSE::log::info("sink: Obody_ApplyMorph echo for {:08X} suppressed (our own rebuild)", id);
+            return RE::BSEventNotifyControl::kContinue;
+        }
+        if (OBW::g_debugLog) SKSE::log::info("sink: Obody_ApplyMorph -> queue {:08X}", id);
+        wm.QueueForMorphs(actor);
         return RE::BSEventNotifyControl::kContinue;
     }
 };
@@ -96,6 +107,7 @@ public:
         if (!armo || !armo->HasPartOf(RE::BGSBipedObjectForm::BipedObjectSlot::kBody))
             return RE::BSEventNotifyControl::kContinue;
         const RE::FormID id = actor->GetFormID();
+        if (OBW::g_debugLog) SKSE::log::info("refit: body-slot equip change on {:08X}", id);
         if (auto* task = SKSE::GetTaskInterface()) {
             task->AddTask([id]() {
                 auto* a = RE::TESForm::LookupByID<RE::Actor>(id);

@@ -1,3 +1,12 @@
+Version 1.5.2
+
+- Fixed bodies visibly re-morphing on their own from time to time. OBody announces every morph apply,
+  and OBW's own rebuild could echo back into that announcement - each echo re-applied the body again.
+  OBW now recognizes the echo of its own work (a short suppression window after each apply) and only
+  reacts to genuine OBody distributions. Re-rolls, cell loads and outfit changes behave exactly as before.
+- Added diagnostic logging (only when Debug Log is enabled in the MCM): every body apply and every
+  source that queues one is now traceable, so future reports can be pinned down from the log alone.
+
 Version 1.5.1
 
 - Big men are finally BIG - without the spiky mesh. Measured 178 real HIMBO BodySlide presets and found
