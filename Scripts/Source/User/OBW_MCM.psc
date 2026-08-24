@@ -20,6 +20,8 @@ int _raceOption     = -1
 int _keyOption      = -1
 int _exclKeyOption  = -1
 int _exportKeyOption = -1
+int _resetKeysOption = -1
+int _presetOfTargetOption = -1
 int _reprocessOption = -1
 int _biasOption     = -1
 int _seedOption     = -1
@@ -143,9 +145,11 @@ Event OnPageReset(string page)
     ; Apply & hotkey.
     AddHeaderOption("Apply")
     _reprocessOption = AddTextOption("Reprocess all loaded NPCs", "[ Click ]")
+    _presetOfTargetOption = AddTextOption("Preset of target NPC", "[ Aim + Click ]")
     _keyOption = AddKeyMapOption("Re-roll key", OBW_Native.GetReRollKey())
     _exclKeyOption = AddKeyMapOption("Exclude target key", OBW_Native.GetExcludeKey())
     _exportKeyOption = AddKeyMapOption("Export body preset key", OBW_Native.GetExportKey())
+    _resetKeysOption = AddTextOption("Reset keybinds", "[ Click ]")
 
     ; ── RIGHT COLUMN: per-mode / distribution settings ──────────────────
     ; Procedural variety: the distribution dials for the procedural modes (0 / 2).
@@ -435,6 +439,32 @@ Event OnOptionSelect(int option)
         SetToggleOptionValue(_debugOption, newDbg)
     elseif option == _reprocessOption
         SendModEvent("OBW_Reprocess")   ; OBW_Quest re-queues all loaded NPCs + arms the drain
+    elseif option == _presetOfTargetOption
+        ; Show which OBody preset shaped the NPC you're aiming at (modes 1 & 2). OBW unassigns the preset in
+        ; OBody after taking over, so OBody itself reports "unknown"; OBW kept the name.
+        Actor tgt = Game.GetCurrentCrosshairRef() as Actor
+        if !tgt
+            Debug.MessageBox("OBW: aim at an NPC first, then click this option.")
+        else
+            string pn = OBW_Native.GetActorPresetName(tgt)
+            if pn == ""
+                Debug.MessageBox(tgt.GetActorBase().GetName() + ": procedural body (no OBody preset).")
+            else
+                Debug.MessageBox(tgt.GetActorBase().GetName() + " is using OBody preset:\n" + pn)
+            endif
+        endif
+    elseif option == _resetKeysOption
+        ; Restore the defaults: re-roll = [ (DX scancode 26), exclude + export unbound (0).
+        ; Fixes "I bound exclude and now can't clear it" - SkyUI's keymap widget can rebind but not unbind.
+        OBW_Native.SetReRollKey(26)
+        OBW_Native.SetExcludeKey(0)
+        OBW_Native.SetExportKey(0)
+        SetKeyMapOptionValue(_keyOption, 26)
+        SetKeyMapOptionValue(_exclKeyOption, 0)
+        SetKeyMapOptionValue(_exportKeyOption, 0)
+        int hReset = ModEvent.Create("OBW_RebindKey")   ; re-arm the C++/Papyrus key state to the new values
+        ModEvent.Send(hReset)
+        Debug.Notification("OBW: keybinds reset (re-roll = [ , exclude and export unbound).")
     elseif _exclPlugins
         ; Exclusions page: page nav first, then the per-plugin checkboxes.
         if _exclPrevOption != -1 && option == _exclPrevOption
@@ -515,6 +545,10 @@ Event OnOptionHighlight(int option)
         SetInfoText("Writes extra detail to the log file. Leave it off - only turn it on if you're troubleshooting a problem.")
     elseif option == _reprocessOption
         SetInfoText("Re-applies bodies to the NPCs around you right now, without waiting to walk between areas. Use it after changing a setting. (In Random mode it also gives them fresh bodies.)")
+    elseif option == _presetOfTargetOption
+        SetInfoText("In OBody Sim Weight and Procedural Oriented modes, aim your crosshair at an NPC and click this to see which OBody preset their body is based on. (OBW takes the preset over, so OBody's own menu would just say 'unknown'.)")
+    elseif option == _resetKeysOption
+        SetInfoText("Restores the hotkeys to their defaults: re-roll back to the [ key, and the exclude and export keys unbound. Use this if you bound a key and want to clear it (the rebind widget can change a key but not remove it).")
     elseif _exclPlugins
         SetInfoText("Tick a mod to leave its NPCs alone - OBW won't touch them, so custom-bodied followers keep their look. Your choices are remembered across saves.")
     endif

@@ -19,7 +19,9 @@ float[] Function GetPresetMorphs(string asPreset, Actor akActor) global native
 bool Function ApplyPresetMorphs(string asPreset, Actor akActor, string asObKey) global native
 ; Procedural modes: the WHOLE per-NPC morph suite in one call (set + blend + OBody clear/re-assert +
 ; clothed trim + one rebuild + neck color, all in a main-thread task). False = SKEE C++ iface missing.
-bool Function ApplyAllMorphs(Actor akActor, bool abIsFemale, string asObKey) global native
+bool Function ApplyAllMorphs(Actor akActor, bool abIsFemale, string asObKey, string asPreset) global native
+; The OBody preset an NPC's body came from (modes 1/2); "" if pure procedural / not recorded.
+string Function GetActorPresetName(Actor akActor) global native
 
 ; Debug: write a line into OBodyNGWeight.log (only when debug logging is ON).
 Function Log(string asMsg) global native

@@ -10,6 +10,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>     // preset export
+#include <unordered_map>
+#include <vector>
 
 namespace OBW::PapyrusBindings {
 
@@ -107,6 +109,7 @@ bool ApplyPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::A
         if (morphs.empty()) return false;
         const RE::FormID id = a_actor->GetFormID();
         std::string obKey = a_obKey.c_str();
+        WeightManager::GetSingleton().SetPresetName(id, a_preset.c_str() ? a_preset.c_str() : "");  // remember for the MCM
         // Do ALL SKEE work on the MAIN thread (morph-store writes AND the geometry rebuild, together):
         // running it inline on the Papyrus VM thread stalls the game, and splitting the writes from the
         // rebuild across threads left the body unchanged. One task per actor; the drain throttles the
@@ -150,7 +153,8 @@ bool ApplyPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::A
 // (same proven pattern as ApplyPresetMorphs above): set morphs -> oriented blend -> drop OBody's morphs ->
 // re-assert "processed" -> clothed-refit delta -> ONE rebuild -> neck color. Returns false when SKEE's C++
 // interface is unavailable -> Papyrus falls back to its old slider-by-slider path.
-bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale, RE::BSFixedString a_obKey) {
+bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale, RE::BSFixedString a_obKey,
+                    RE::BSFixedString a_preset) {
     try {
         if (!OBW::g_morph || !a_actor) return false;
         auto* task = SKSE::GetTaskInterface();
@@ -196,22 +200,46 @@ bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale,
             def("TorsoBackShape"); def("TorsoBackDefinition"); def("ArmsTrapsValleys"); def("LegsThinner");
         }
 
-        // Oriented blend strength (mode 2 only): each OBW slider is pulled toward the OBody preset value.
-        // The preset's "OBody" morphs are read INSIDE the task (main thread), right before we clear them.
-        const float orient = (wm.GetBodyMode() == BodyMode::kProceduralOriented) ? wm.GetPresetOrient() : 0.0f;
+        // Oriented blend (mode 2 only): pull the body toward the OBody PRESET by `orient`. Fixed 2026-08-24:
+        // the old blend only touched OBW's ~52-slider list, so at orient=1.0 every OTHER slider the preset
+        // sets was dropped when OBody's key was cleared -> the body "morphed to something different", never
+        // the preset (user report). Now we compute the FULL preset (PresetManager::ComputeAll, every slider
+        // at this NPC's weight) and blend over the UNION: at 1.0 the result IS the preset, exactly.
+        const bool oriented = (wm.GetBodyMode() == BodyMode::kProceduralOriented);
+        const float orient = oriented ? wm.GetPresetOrient() : 0.0f;
+        const std::string presetName = a_preset.c_str() ? a_preset.c_str() : "";
+
+        std::vector<std::pair<std::string, float>> preset;   // full preset (only fetched when it matters)
+        if (orient > 0.0f && !presetName.empty()) {
+            try {
+                const float w = wm.GetPresetWeight(a_actor);
+                preset = PresetManager::GetSingleton().ComputeAll(presetName.c_str(), w);
+            } catch (...) { preset.clear(); }
+        }
 
         const RE::FormID id = a_actor->GetFormID();
         std::string obKey = a_obKey.c_str();
-        task->AddTask([id, morphs = std::move(morphs), obKey = std::move(obKey), orient]() {
+        // Remember which preset shaped this NPC (modes 1/2), so the MCM stops showing "unknown".
+        wm.SetPresetName(id, (oriented && !presetName.empty()) ? presetName : std::string{});
+        task->AddTask([id, morphs = std::move(morphs), obKey = std::move(obKey), orient,
+                       preset = std::move(preset)]() {
             if (!OBW::g_morph) return;
             auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
             if (!a) return;
-            for (const auto& [name, val] : morphs) {
-                float v = val;
-                if (orient > 0.0f) {
-                    const float pv = OBW::g_morph->GetMorph(a, name.c_str(), "OBody");
-                    if (pv > 0.0f) v = v * (1.0f - orient) + pv * orient;
+            // Blend base = OBW's generated values, keyed by slider name for the union pass below.
+            std::unordered_map<std::string, float> out;
+            out.reserve(morphs.size() + preset.size());
+            for (const auto& [name, val] : morphs) out[name] = val;
+            if (orient > 0.0f && !preset.empty()) {
+                // Every slider EITHER side sets is blended: obw*(1-orient) + preset*orient. A slider the
+                // preset sets but OBW doesn't starts from OBW-base 0, so at orient=1.0 it becomes the preset
+                // value (and the whole body converges exactly on the preset).
+                for (const auto& [name, pv] : preset) {
+                    const float obw = out.count(name) ? out[name] : 0.0f;
+                    out[name] = obw * (1.0f - orient) + pv * orient;
                 }
+            }
+            for (const auto& [name, v] : out) {
                 OBW::g_morph->SetMorph(a, name.c_str(), "OBW", v);
             }
             float wasProcessed = OBW::g_morph->GetMorph(a, obKey.c_str(), "OBody");
@@ -667,8 +695,12 @@ public:
 
         for (RE::InputEvent* e = *a_event; e; e = e->next) {
             const auto* btn = e->AsButtonEvent();
-            if (!btn || !btn->IsDown() || btn->GetDevice() != RE::INPUT_DEVICE::kKeyboard) continue;
-            const int key = static_cast<int>(btn->GetIDCode());
+            if (!btn || !btn->IsDown()) continue;
+            // Match the SkyUI keycode across ALL devices, not just kKeyboard (the 1.5.2 regression that
+            // broke VR: bound keys fire from the VR controllers (kVRRight/kVRLeft) — and mouse — never
+            // kKeyboard, so nothing happened). The old Papyrus RegisterForKey accepted any device; this
+            // restores that. UnifiedCode maps mouse to the 256+ range SkyUI uses; VR/gamepad match raw.
+            const int key = UnifiedCode(btn);
             if (key == exclude && exclude != 0)      HandleExclude();
             else if (key == exportK && exportK != 0) HandleExport();
             else if (key == reRoll && reRoll != 0)   HandleReRoll();
@@ -677,6 +709,14 @@ public:
     }
 
 private:
+    // Unified button code matching SkyUI's AddKeyMapOption convention. Keyboard = raw DX scancode; mouse =
+    // 256 + button; gamepad and the VR controllers report their own raw idCode (which is what SkyUI-VR's
+    // AddKeyMapOption stores for a controller bind), so those pass through unchanged.
+    static int UnifiedCode(const RE::ButtonEvent* a_btn) {
+        const int id = static_cast<int>(a_btn->GetIDCode());
+        return (a_btn->GetDevice() == RE::INPUT_DEVICE::kMouse) ? (256 + id) : id;
+    }
+
     // Desktop: crosshair target; VR: HMD-gaze cone-cast (same helper the Papyrus native used).
     static RE::Actor* PickTarget() {
         if (REL::Module::IsVR()) return GetVRLookTarget(nullptr);
@@ -866,6 +906,14 @@ bool HasMorphsApplied(RE::StaticFunctionTag*, RE::Actor* a_actor) {
     return WeightManager::GetSingleton().HasMorphsApplied(a_actor->GetFormID());
 }
 
+// The OBody preset an actor's body derives from (modes 1/2), or "" if none recorded (pure procedural).
+// The MCM shows this so re-applying a preset no longer means guessing - OBW unassigns it in OBody, so
+// OBody itself reports "unknown"; OBW remembered it. Empty result -> MCM shows "(procedural / none)".
+RE::BSFixedString GetActorPresetName(RE::StaticFunctionTag*, RE::Actor* a_actor) {
+    if (!a_actor) return RE::BSFixedString{ "" };
+    return RE::BSFixedString{ WeightManager::GetSingleton().GetPresetName(a_actor->GetFormID()).c_str() };
+}
+
 }  // namespace
 
 bool Register(RE::BSScript::IVirtualMachine* a_vm) {
@@ -899,6 +947,7 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("SetExcludeKey",       kScript, SetExcludeKey);
     a_vm->RegisterFunction("GetExportKey",        kScript, GetExportKey);
     a_vm->RegisterFunction("SetExportKey",        kScript, SetExportKey);
+    a_vm->RegisterFunction("GetActorPresetName",  kScript, GetActorPresetName);
     a_vm->RegisterFunction("HasMorphsPending",    kScript, HasMorphsPending);
     a_vm->RegisterFunction("GetBodyMode",         kScript, GetBodyMode);
     a_vm->RegisterFunction("SetBodyMode",         kScript, SetBodyMode);

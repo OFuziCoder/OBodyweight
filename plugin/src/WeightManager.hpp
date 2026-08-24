@@ -220,6 +220,12 @@ public:
     // Prevents the OBody re-fire loop without blocking future legitimate events.
     void MarkMorphsApplied(RE::FormID id)  { std::scoped_lock l(_mutex); _morphsApplied.insert(id); StampApplyLocked(id); }
 
+    // Remember / read the OBody preset an actor's body derives from (modes 1 = Sim Weight, 2 = Oriented).
+    // OBW unassigns the preset in OBody after taking over, so this is the only place the name survives -
+    // the MCM/dossier reads it back instead of showing "unknown". Empty = none recorded (procedural mode 0).
+    void SetPresetName(RE::FormID id, std::string_view n) { std::scoped_lock l(_mutex); if (n.empty()) _presetName.erase(id); else _presetName[id] = n; }
+    std::string GetPresetName(RE::FormID id) { std::scoped_lock l(_mutex); auto it = _presetName.find(id); return it == _presetName.end() ? "" : it->second; }
+
     // TIME-WINDOW re-fire suppression (2026-07-20, the "bodies re-apply from time to time" loop): the
     // Papyrus OnActorGenerated path consumes the one-shot above, but the C++ Obody_ApplyMorph sink used to
     // queue UNCONDITIONALLY - when OBody echoes anything our own rebuild causes, that path re-fed the queue
@@ -232,6 +238,14 @@ public:
     }
     bool RecentlyApplied(RE::FormID id, double a_windowMs = 2500.0) {
         std::scoped_lock l(_mutex);
+        return RecentlyAppliedLocked(id, a_windowMs);
+    }
+    // Lock-free variant for callers already holding _mutex (e.g. QueueForMorphs). Same 2.5s window: an
+    // OnActorGenerated re-fire this soon after OUR apply is the equip-churn loop (an outfit change rebuilds
+    // the biped 3D -> OBody re-fires -> we'd re-roll her in mode 1), NOT a cell crossing (those land far
+    // later) nor the first distribution (nothing stamped yet at first enqueue). Kills "open ledger/change
+    // gear -> managed body re-rolls" without blocking legit re-processing.
+    bool RecentlyAppliedLocked(RE::FormID id, double a_windowMs = 2500.0) {
         auto it = _recentApply.find(id);
         if (it == _recentApply.end()) return false;
         const double now = std::chrono::duration<double, std::milli>(
@@ -358,6 +372,9 @@ private:
     std::vector<RE::FormID>                       _morphQueue;
     std::unordered_map<RE::FormID, std::uint32_t> _overrideSeed;
     std::unordered_map<RE::FormID, int>           _fallbackWatch;   // id -> grace ticks before self-distributing
+    std::unordered_map<RE::FormID, std::string>   _presetName;      // id -> OBody preset the actor's body came from
+                                                                    // (modes 1/2); OBW unassigns it in OBody, so we
+                                                                    // remember it here to show in the MCM ("unknown" fix)
 
     static constexpr int kFallbackGraceTicks = 2;   // SweepFallback ticks (~2s each) to wait for OBody first
 
