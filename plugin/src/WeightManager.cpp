@@ -1403,6 +1403,12 @@ void WeightManager::QueueForMorphs(RE::Actor* a_actor) {
     // its stale ones — see CleanPlayerMorphs).
     if (a_actor == RE::PlayerCharacter::GetSingleton()) return;
     const RE::FormID id = a_actor->GetFormID();
+    // Re-fire suppression: skip an OnActorGenerated/fallback re-enqueue landing within 2.5s of our own apply.
+    // That short window is the equip-churn loop (an outfit change on a managed NPC - e.g. OFW's dossier
+    // neutralize, or any armor swap - rebuilds her biped 3D, OBody re-fires OnActorGenerated, and in mode 1
+    // we'd re-roll her body). Cell crossings and genuine re-processing land far later than 2.5s, so they
+    // still re-queue. (Sibling guard to the Obody_ApplyMorph sink's RecentlyApplied check.)
+    if (RecentlyAppliedLocked(id)) return;
     // Dedup against the LIVE queue only (NOT _processed): OBody re-fires on every cell crossing and we
     // must re-process then to clear its re-applied preset, so a processed actor CAN be re-queued by the
     // OBody / reprocess / re-roll paths. This guard only stops the same actor sitting in the queue twice
@@ -1766,6 +1772,7 @@ void WeightManager::Revert() {
     g_debugLog    = _debugLog;
     _seed         = OBW::CollectEntropy();
     _overrideSeed.clear();
+    _presetName.clear();   // runtime cache (like _processed) - repopulated as NPCs re-process on the new save
     ClearProcessed();
 }
 

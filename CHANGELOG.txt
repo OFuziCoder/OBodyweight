@@ -1,3 +1,20 @@
+Version 1.5.3
+
+- Fixed the exclude/export hotkeys doing nothing in VR (regression in 1.5.2). The native hotkey handler
+  only listened to the keyboard, but in VR bound keys come from the controllers - so aiming at an NPC and
+  pressing the exclude key did nothing at all. It now responds on every input device (keyboard, mouse,
+  gamepad and both VR controllers), just like the old script-based hotkeys did.
+- Added a "Reset keybinds" button in the menu. Restores the re-roll key to the default ([) and clears the
+  exclude and export keys. Fixes being stuck with a bound key you couldn't remove (the rebind widget can
+  change a key, but not unbind it).
+- Procedural Oriented at 100% now actually gives you the preset. Before, the blend only touched OBW's own
+  sliders, so at full strength every other slider the preset set was dropped and the body snapped to
+  something else. The blend now covers the whole preset - at 100% the body matches the OBody preset
+  exactly, and any value in between is a true blend between the generated body and the preset.
+- You can now see which OBody preset an NPC is using. In OBody Sim Weight and Procedural Oriented modes,
+  aim at an NPC and use the new "Preset of target NPC" button in the menu - it shows the preset name that
+  OBW took over (OBody's own menu just says "unknown" because OBW unassigns it).
+
 Version 1.5.2
 
 - Fixed bodies visibly re-morphing on their own from time to time. OBody announces every morph apply,

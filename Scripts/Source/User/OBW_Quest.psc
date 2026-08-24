@@ -195,12 +195,17 @@ Function ApplyMorphs(Actor akActor)
     ; we can re-assert it after removing OBody's contribution (so OBody leaves the actor to us).
     string obKey = StorageUtil.GetStringValue(None, "obody_ng_distribution_key", "obody_processed")
 
+    ; The OBody preset assigned to this NPC (empty in pure procedural). Passed to C++ so mode 2 (Oriented)
+    ; can blend toward the FULL preset (all its sliders, not just OBW's own list), and so the preset NAME is
+    ; remembered for the MCM (OBW unassigns it below, so this is our only chance to read it).
+    string preset = OBodyNative.GetPresetAssignedToActor(akActor)
+
     ; FAST PATH (2026-07-15): the WHOLE morph suite in ONE native call. C++ computes every slider and runs
     ; all SKEE work (set + oriented blend + OBody clear/re-assert + clothed trim + ONE rebuild + neck color)
     ; in a single main-thread task. Replaces ~110 Papyrus native calls per NPC — the source of the "morphs
     ; are slow" report. Falls through to the old slider-by-slider path only if SKEE's C++ interface is missing.
     OBW_Native.MarkMorphsApplied(akActor)   ; suppress OBody's re-fire when the rebuild lands
-    if OBW_Native.ApplyAllMorphs(akActor, isFemale, obKey)
+    if OBW_Native.ApplyAllMorphs(akActor, isFemale, obKey, preset)
         OBodyNative.AssignPresetToActor(akActor, "", false, true)   ; unassign preset (bookkeeping only)
         ApplyPhysicsTier(akActor)
         return
