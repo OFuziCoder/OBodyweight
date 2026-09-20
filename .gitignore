@@ -33,3 +33,32 @@ dist/
 # The release zip carries these; the repo stays source-only.
 SKSE/Plugins/OBodyNGWeight.dll
 Scripts/*.pex
+
+# ── SECRETS — never commit, in any form ─────────────────────────────────────────────────────────
+# The Nexus API key is a personal Premium credential (it lives OUTSIDE every repo, at
+# D:\Skyrim Mods\_nexus.key, and tools/download_bank.py READS it from there rather than embedding it).
+# These patterns are defence in depth: they stop a key file from ever being added by accident.
+# If a secret is ever committed, .gitignore does NOT remove it from history - rotate the key on Nexus
+# (Account settings -> API Keys) and rewrite history before pushing.
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*_key
+*_key.*
+*apikey*
+*api_key*
+*.secret
+*.secrets
+secrets.*
+credentials*
+.netrc
+.env
+.env.*
+!.env.example
+# common ad-hoc names for a pasted token
+nexus.key
+_nexus.key
+token.txt
+*.token

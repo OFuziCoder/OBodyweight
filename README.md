@@ -55,6 +55,11 @@ Generation mode (Procedural Morphs / OBody Sim Weight / Procedural Oriented), We
 (Oriented mode), Seed, a re-bindable **Re-roll key**, and a **Debug logging** toggle. Options
 grey out when they don't apply to the selected mode.
 
+The optional **AI body generation** path uses small local models trained on community BodySlide
+presets. F3BA, BHUNP and HIMBO have separate generators; `Base body` selects the female model. The
+same seed remains deterministic, all outputs retain OBW's mesh-safety ceilings, and missing models
+fall back safely. Unusual breasts remains effective through a deterministic sag/perk post-process.
+
 ## Requirements
 
 - Skyrim SE/AE + **SKSE64**

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(OBodyNGWeight VERSION 1.5.3 LANGUAGES CXX)
+project(OBodyNGWeight VERSION 1.6.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -54,6 +54,7 @@ include("${commonlibsse_SOURCE_DIR}/cmake/CommonLibSSE.cmake")
 # ── Plugin ────────────────────────────────────────────────────────────────────
 set(SOURCES
     src/main.cpp
+    src/BodyNet.cpp
     src/WeightManager.cpp
     src/PapyrusBindings.cpp
     src/PresetManager.cpp

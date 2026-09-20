@@ -1,4 +1,5 @@
 #include "WeightManager.hpp"
+#include "BodyNet.hpp"
 #include "PresetManager.hpp"
 #include "MorphInterface.hpp"
 #include "Config.hpp"
@@ -18,6 +19,28 @@ namespace OBW::PapyrusBindings {
 namespace {
 
 constexpr std::string_view kScript{ "OBW_Native" };
+
+bool HasMorphInterface(RE::StaticFunctionTag*) {
+    return OBW::CheckMorphInterface("Papyrus morph preflight");
+}
+
+bool CanApplyMorphs(RE::StaticFunctionTag*, RE::Actor* actor) {
+    if (!OBW::CheckMorphInterface("Actor morph preflight")) return false;
+    if (!actor) {
+        SKSE::log::warn("Morph preflight: null actor; application skipped");
+        return false;
+    }
+    if (!actor->GetActorBase()) {
+        SKSE::log::warn("Morph preflight: actor {:08X} has no ActorBase; OBody calls skipped", actor->GetFormID());
+        return false;
+    }
+    return true;
+}
+
+const char* DisplayNameOrUnknown(RE::Actor* actor) {
+    const char* name = actor ? actor->GetDisplayFullName() : nullptr;
+    return name ? name : "Unknown actor";
+}
 
 std::string ToLowerStr(std::string_view s) {
     std::string out{ s };
@@ -97,16 +120,22 @@ std::vector<float> GetPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_p
 // Body mode 1 — apply the OBody-assigned preset interpolated at the actor's mock weight, ENTIRELY in
 // C++ via the SKEE BodyMorph interface: sets every slider (no Papyrus 128-array cap), drops OBody's
 // own "OBody"-key morphs, re-asserts the "processed" flag, and rebuilds (body + worn armor). Returns
-// false if SKEE is unavailable or the preset wasn't found -> Papyrus falls back to its array path.
+// false on failure with diagnostics; Papyrus skips application without resetting OBody morphs.
 bool ApplyPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::Actor* a_actor,
                        RE::BSFixedString a_obKey) {
     try {
-        if (!OBW::g_morph || !a_actor) return false;
+        if (!CanApplyMorphs(nullptr, a_actor)) return false;
         auto* task = SKSE::GetTaskInterface();
-        if (!task) return false;
+        if (!task) {
+            SKSE::log::error("ApplyPresetMorphs: SKSE task interface unavailable; application skipped");
+            return false;
+        }
         const float w = WeightManager::GetSingleton().GetPresetWeight(a_actor);
         auto morphs = PresetManager::GetSingleton().ComputeAll(a_preset.c_str(), w);
-        if (morphs.empty()) return false;
+        if (morphs.empty()) {
+            SKSE::log::warn("ApplyPresetMorphs: preset '{}' has no usable morphs; actor {:08X} skipped", a_preset.c_str(), a_actor->GetFormID());
+            return false;
+        }
         const RE::FormID id = a_actor->GetFormID();
         std::string obKey = a_obKey.c_str();
         WeightManager::GetSingleton().SetPresetName(id, a_preset.c_str() ? a_preset.c_str() : "");  // remember for the MCM
@@ -115,9 +144,16 @@ bool ApplyPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::A
         // rebuild across threads left the body unchanged. One task per actor; the drain throttles the
         // rate. Re-resolve the actor by FormID in case it unloaded before the task runs.
         task->AddTask([id, morphs = std::move(morphs), obKey = std::move(obKey)]() {
-            if (!OBW::g_morph) return;
+            if (!OBW::CheckMorphInterface("ApplyPresetMorphs task")) return;
             auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
-            if (!a) return;
+            if (!a) {
+                SKSE::log::warn("ApplyPresetMorphs: actor {:08X} no longer available; queued application skipped", id);
+                return;
+            }
+            if (!a->GetActorBase() || !a->Is3DLoaded()) {
+                SKSE::log::warn("ApplyPresetMorphs: actor {:08X} lost base or loaded 3D; queued application skipped", id);
+                return;
+            }
             // Preserve OBody's procedural nipple/genital variation: copy it out before the clear, and skip
             // those sliders in OBW's own writes (OBody's value = preset base + its per-NPC randomization —
             // writing the preset's copy under "OBW" too would double-apply them).
@@ -152,13 +188,16 @@ bool ApplyPresetMorphs(RE::StaticFunctionTag*, RE::BSFixedString a_preset, RE::A
 // values are computed here (WeightManager is thread-safe) and ALL SKEE work runs in one main-thread task
 // (same proven pattern as ApplyPresetMorphs above): set morphs -> oriented blend -> drop OBody's morphs ->
 // re-assert "processed" -> clothed-refit delta -> ONE rebuild -> neck color. Returns false when SKEE's C++
-// interface is unavailable -> Papyrus falls back to its old slider-by-slider path.
+// interface is unavailable -> Papyrus safely skips this application.
 bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale, RE::BSFixedString a_obKey,
                     RE::BSFixedString a_preset) {
     try {
-        if (!OBW::g_morph || !a_actor) return false;
+        if (!CanApplyMorphs(nullptr, a_actor)) return false;
         auto* task = SKSE::GetTaskInterface();
-        if (!task) return false;
+        if (!task) {
+            SKSE::log::error("ApplyAllMorphs: SKSE task interface unavailable; application skipped");
+            return false;
+        }
         auto& wm = WeightManager::GetSingleton();
 
         std::vector<std::pair<std::string, float>> morphs;
@@ -166,6 +205,21 @@ bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale,
         const float kDef = wm.GetMorphScale() / 100.0f;   // shape sliders: 0-100 value -> SKEE 0-1 x master scale
 
         if (a_isFemale) {
+            // BODYNET: when the learned generator is on AND a model loaded, it produces the whole slider
+            // set at once. Any refusal (off / no model / unsupported actor) falls straight through to the
+            // procedural code below, which is untouched. See WeightManager::BuildNeuralBody.
+            if (std::vector<std::pair<std::string, float>> neural; wm.BuildNeuralBody(a_actor, neural)) {
+                morphs = std::move(neural);
+                // BHUNP aliases: OBW's "set-both" rule - emit the BHUNP names too, each a harmless no-op
+                // on the body that lacks them, so one value list drives either mesh (docs/BODY_SLIDER_MAP.md).
+                auto grab = [&](const char* n) -> float {
+                    for (const auto& [k, v] : morphs) if (k == n) return v;
+                    return 0.0f;
+                };
+                morphs.emplace_back("ThighInnerThicker", grab("ThighInsideThicc_v2"));
+                morphs.emplace_back("ThighOuter",        grab("ThighOutsideThicc_v2"));
+                morphs.emplace_back("ThighFBThicker",    grab("ThighFBThicc_v2"));
+            } else {
             const float T = wm.GetFrameScore(a_actor);
             auto vol = [&](const char* n) { morphs.emplace_back(n, wm.GetVolumeMorph(a_actor, T, n)); };
             auto def = [&](const char* n) { morphs.emplace_back(n, wm.GetMorphValue(a_actor, T, n) * kDef); };
@@ -186,7 +240,15 @@ bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale,
             morphs.emplace_back("ThighInnerThicker", wm.GetMorphValue(a_actor, T, "ThighInsideThicc_v2") * kDef);
             morphs.emplace_back("ThighOuter",        wm.GetVolumeMorph(a_actor, T, "ThighOutsideThicc_v2"));
             morphs.emplace_back("ThighFBThicker",    wm.GetVolumeMorph(a_actor, T, "ThighFBThicc_v2"));
+            }   // end procedural female branch
         } else {
+            // BODYNET (male): same contract as the female branch - the net produces the whole HIMBO slider
+            // set, and any refusal falls through to the untouched procedural code below. Shipped because
+            // measured against the male preset corpus it beats the procedural male path by a wide margin
+            // (correlation distance 0.069 vs 0.409; see tools/bodynet/PLAN_v2.md).
+            if (std::vector<std::pair<std::string, float>> neural; wm.BuildNeuralBody(a_actor, neural)) {
+                morphs = std::move(neural);
+            } else {
             auto vol = [&](const char* n) { morphs.emplace_back(n, wm.GetMaleVolumeMorph(a_actor, n)); };
             auto def = [&](const char* n) { morphs.emplace_back(n, wm.GetMaleMorphValue(a_actor, n) * kDef); };
             // Volume (build; intensity + HIMBO soft-cap baked in) — mirrors OBW_Quest.ApplyMaleMorphs.
@@ -198,6 +260,7 @@ bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale,
             def("Lean"); def("PecsFlatten"); def("TorsoShoulderInc"); def("TorsoWaistSize"); def("TorsoWidth");
             def("TorsoFlatAbs"); def("TorsoVLine"); def("TorsoRibsDefinition");
             def("TorsoBackShape"); def("TorsoBackDefinition"); def("ArmsTrapsValleys"); def("LegsThinner");
+            }   // end procedural male branch
         }
 
         // Oriented blend (mode 2 only): pull the body toward the OBody PRESET by `orient`. Fixed 2026-08-24:
@@ -223,9 +286,16 @@ bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale,
         wm.SetPresetName(id, (oriented && !presetName.empty()) ? presetName : std::string{});
         task->AddTask([id, morphs = std::move(morphs), obKey = std::move(obKey), orient,
                        preset = std::move(preset)]() {
-            if (!OBW::g_morph) return;
+            if (!OBW::CheckMorphInterface("ApplyAllMorphs task")) return;
             auto* a = RE::TESForm::LookupByID<RE::Actor>(id);
-            if (!a) return;
+            if (!a) {
+                SKSE::log::warn("ApplyAllMorphs: actor {:08X} no longer available; queued application skipped", id);
+                return;
+            }
+            if (!a->GetActorBase() || !a->Is3DLoaded()) {
+                SKSE::log::warn("ApplyAllMorphs: actor {:08X} lost base or loaded 3D; queued application skipped", id);
+                return;
+            }
             // Blend base = OBW's generated values, keyed by slider name for the union pass below.
             std::unordered_map<std::string, float> out;
             out.reserve(morphs.size() + preset.size());
@@ -256,7 +326,7 @@ bool ApplyAllMorphs(RE::StaticFunctionTag*, RE::Actor* a_actor, bool a_isFemale,
             wmt.ApplyClothedRefit(a, wmt.IsBodyArmorWorn(a), true, false);     // trim delta only; rebuild below
             wmt.StampApply(id);                                        // open the re-fire suppression window
             OBW::g_morph->ApplyBodyMorphs(a, false);                   // ONE rebuild: body + worn armor
-            if (OBW::g_debugLog) SKSE::log::info("apply: rebuilt {:08X} '{}'", id, a->GetDisplayFullName());
+            if (OBW::g_debugLog) SKSE::log::info("apply: rebuilt {:08X} '{}'", id, DisplayNameOrUnknown(a));
             wmt.ApplyNeckColor(a);
             wmt.ScheduleNeckColor(a->GetFormID());
         });
@@ -464,6 +534,20 @@ void SetBaseBodyPref(RE::StaticFunctionTag*, std::int32_t a_pref) {
 // Resolved base body (0 unknown/ambiguous, 1 CBBE, 2 BHUNP) — the MCM uses this to gate the realism toggles.
 std::int32_t GetBaseBody(RE::StaticFunctionTag*) {
     return WeightManager::GetSingleton().GetBaseBody();
+}
+
+// BodyNet toggle. GetNeuralAvailable lets the MCM grey the option out when no model file is installed,
+// so the user never toggles something that cannot do anything.
+bool GetNeuralBody(RE::StaticFunctionTag*) {
+    return WeightManager::GetSingleton().GetNeuralBody();
+}
+void SetNeuralBody(RE::StaticFunctionTag*, bool a_on) {
+    WeightManager::GetSingleton().SetNeuralBody(a_on);
+}
+bool GetNeuralAvailable(RE::StaticFunctionTag*) {   // true if any supported body has a model installed
+    return BodyNet::Available(BodyNet::Slot::Female) ||
+           BodyNet::Available(BodyNet::Slot::FemaleBHUNP) ||
+           BodyNet::Available(BodyNet::Slot::Male);
 }
 
 float GetClothedRefit(RE::StaticFunctionTag*) {
@@ -746,7 +830,7 @@ private:
             return;
         }
         if (OBW::g_debugLog) {
-            const std::string msg = std::string("Regenerating body: ") + a->GetDisplayFullName();
+            const std::string msg = std::string("Regenerating body: ") + DisplayNameOrUnknown(a);
             RE::DebugNotification(msg.c_str());
         }
         WeightManager::GetSingleton().RegenerateActor(a);
@@ -783,7 +867,7 @@ private:
             OBWMorphCollector col;
             OBW::g_morph->VisitMorphValues(actor, col);
             if (col.out.empty()) {
-                std::string msg = std::string("OBW: no OBW body on ") + actor->GetDisplayFullName() + " to export.";
+                std::string msg = std::string("OBW: no OBW body on ") + DisplayNameOrUnknown(actor) + " to export.";
                 RE::DebugNotification(msg.c_str());
                 return;
             }
@@ -797,7 +881,7 @@ private:
             }
 
             // Sanitized preset/file name: "OBW - <actor> (<formid>)".
-            std::string who = actor->GetDisplayFullName() ? actor->GetDisplayFullName() : "Actor";
+            std::string who = DisplayNameOrUnknown(actor);
             std::string safe;
             for (char c : who)
                 if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' || c == '_') safe += c;
@@ -854,7 +938,7 @@ private:
             RE::DebugNotification("OBW: this NPC is dynamically spawned and can't be excluded by ID - exclude its source mod in the MCM instead.");
             return;
         }
-        std::string msg = a->GetDisplayFullName();
+        std::string msg = DisplayNameOrUnknown(a);
         if (nowExcl) {
             msg += " excluded from OBW (reload to revert its body).";
         } else {
@@ -922,6 +1006,8 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("GetPresetMorphs",     kScript, GetPresetMorphs);
     a_vm->RegisterFunction("ApplyPresetMorphs",   kScript, ApplyPresetMorphs);
     a_vm->RegisterFunction("ApplyAllMorphs",      kScript, ApplyAllMorphs);
+    a_vm->RegisterFunction("HasMorphInterface",   kScript, HasMorphInterface);
+    a_vm->RegisterFunction("CanApplyMorphs",      kScript, CanApplyMorphs);
     a_vm->RegisterFunction("Log",                 kScript, Log);
     a_vm->RegisterFunction("GetDebugLog",         kScript, GetDebugLog);
     a_vm->RegisterFunction("SetDebugLog",         kScript, SetDebugLog);
@@ -976,6 +1062,9 @@ bool Register(RE::BSScript::IVirtualMachine* a_vm) {
     a_vm->RegisterFunction("GetBaseBodyPref",     kScript, GetBaseBodyPref);
     a_vm->RegisterFunction("SetBaseBodyPref",     kScript, SetBaseBodyPref);
     a_vm->RegisterFunction("GetBaseBody",         kScript, GetBaseBody);
+    a_vm->RegisterFunction("GetNeuralBody",       kScript, GetNeuralBody);
+    a_vm->RegisterFunction("SetNeuralBody",       kScript, SetNeuralBody);
+    a_vm->RegisterFunction("GetNeuralAvailable",  kScript, GetNeuralAvailable);
     a_vm->RegisterFunction("GetClothedRefit",     kScript, GetClothedRefit);
     a_vm->RegisterFunction("SetClothedRefit",     kScript, SetClothedRefit);
     a_vm->RegisterFunction("RefreshClothedRefit", kScript, RefreshClothedRefit);

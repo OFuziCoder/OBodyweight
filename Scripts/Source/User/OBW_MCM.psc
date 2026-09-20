@@ -27,6 +27,7 @@ int _biasOption     = -1
 int _seedOption     = -1
 int _reseedOption   = -1
 int _debugOption    = -1
+int _neuralOption   = -1
 
 string[] _modeLabels
 string[] _bodyLabels
@@ -115,7 +116,8 @@ Event OnPageReset(string page)
         seedFlag = OPTION_FLAG_NONE
     endif
 
-    ; Realism-axis gating by base body (0 auto/unknown, 1 CBBE, 2 BHUNP): Natural (BHUNP-flavor) is for CBBE
+    ; Base-body selection (0 auto/unknown, 1 CBBE, 2 BHUNP) also selects the matching female BodyNet.
+    ; Realism-axis gating: Natural (BHUNP-flavor) is for CBBE
     ; users, Curvy (3BA-flavor) is for BHUNP users. Disable the one that doesn't match the resolved base; show
     ; both when ambiguous. Both still require procedural mode + Female bodies (femProcFlag).
     int base = OBW_Native.GetBaseBody()
@@ -133,6 +135,13 @@ Event OnPageReset(string page)
     _bodyOption = AddMenuOption("Generation mode", _bodyLabels[gm])
     _modeOption = AddMenuOption("Weight mode", _modeLabels[wm])
     _biasOption = AddSliderOption("Bias (size)", OBW_Native.GetBias(), "{0}")
+    ; BodyNet: greyed out unless at least one model file (bodynet_*.obwnet) actually loaded, so the
+    ; toggle can never be switched on into a no-op.
+    int neuralFlag = OPTION_FLAG_DISABLED
+    if OBW_Native.GetNeuralAvailable()
+        neuralFlag = OPTION_FLAG_NONE
+    endif
+    _neuralOption = AddToggleOption("AI body generation", OBW_Native.GetNeuralBody(), neuralFlag)
     AddEmptyOption()
 
     ; Sexes: which bodies OBW manages + male-only tuning.
@@ -433,6 +442,16 @@ Event OnOptionSelect(int option)
             mf = OPTION_FLAG_NONE
         endif
         SetOptionFlags(_maleBuildOption, mf)
+    elseif option == _neuralOption
+        bool newNeu = !OBW_Native.GetNeuralBody()
+        OBW_Native.SetNeuralBody(newNeu)
+        SetToggleOptionValue(_neuralOption, newNeu)
+        ; Bodies only change when an NPC is next processed - point the player at Reprocess.
+        if newNeu
+            Debug.Notification("OBW: AI body generation on - use Reprocess to apply.")
+        else
+            Debug.Notification("OBW: AI body generation off - use Reprocess to apply.")
+        endif
     elseif option == _debugOption
         bool newDbg = !OBW_Native.GetDebugLog()
         OBW_Native.SetDebugLog(newDbg)
@@ -524,7 +543,7 @@ Event OnOptionHighlight(int option)
     elseif option == _curvyOption
         SetInfoText("How many women get a fuller, curvier, more exaggerated shape - the opposite of Natural. For BHUNP users who want some of the curvier look. The rest keep the default. Off by default.")
     elseif option == _baseBodyOption
-        SetInfoText("Which body you use. It just decides which option is shown: Natural for CBBE / 3BA, Curvy for BHUNP. Leave on Auto-detect unless it guesses wrong, then set it yourself.")
+        SetInfoText("Which female body you use. It selects the matching AI generator and decides which realism option is shown: Natural for CBBE / 3BA, Curvy for BHUNP. Leave on Auto-detect unless it guesses wrong, then set it yourself.")
     elseif option == _clothedRefitOption
         SetInfoText("A gentle 'dressed vs nude' adjustment. When an NPC is wearing clothes her body is trimmed a little so the clothes sit better; undressed, she has her full body. 0% = dressed and nude look the same.")
     elseif option == _raceOption
@@ -541,6 +560,8 @@ Event OnOptionHighlight(int option)
         SetInfoText("The seed for this playthrough. The same seed always produces the same bodies.")
     elseif option == _reseedOption
         SetInfoText("Rolls a new seed. NPCs you've already met keep their bodies; only NPCs you haven't met yet use the new seed.")
+    elseif option == _neuralOption
+        SetInfoText("Uses AI to build bodies. Shapes tend to come out better proportioned. Use Reprocess after changing it.")
     elseif option == _debugOption
         SetInfoText("Writes extra detail to the log file. Leave it off - only turn it on if you're troubleshooting a problem.")
     elseif option == _reprocessOption
