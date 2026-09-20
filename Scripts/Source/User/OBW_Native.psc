@@ -1,5 +1,10 @@
 Scriptname OBW_Native Hidden
 
+; Checks the acquired SKEE interface; logs a failure even with DebugLog disabled.
+bool Function HasMorphInterface() global native
+; Checks actor/base and SKEE before calling OBody's native preset methods.
+bool Function CanApplyMorphs(Actor akActor) global native
+
 ; Returns the per-NPC "mock weight" (0-100) — drives the body-size morphs, never written
 ; to the actor's real weight.
 float Function GetWeight(Actor akActor) global native
@@ -15,7 +20,7 @@ float[] Function GetPresetMorphs(string asPreset, Actor akActor) global native
 ; Body mode 1 (preferred path): applies the OBody preset interpolated at the actor's mock weight
 ; ENTIRELY in C++ via SKEE — no 128-slider array cap, far fewer calls. asObKey = OBody's distribution
 ; key. Sets the morphs, drops OBody's "OBody"-key morphs, re-asserts "processed", and rebuilds.
-; Returns false if SKEE is unavailable or the preset wasn't found (caller falls back to the array path).
+; Returns false on failure and logs the reason; caller skips the application safely.
 bool Function ApplyPresetMorphs(string asPreset, Actor akActor, string asObKey) global native
 ; Procedural modes: the WHOLE per-NPC morph suite in one call (set + blend + OBody clear/re-assert +
 ; clothed trim + one rebuild + neck color, all in a main-thread task). False = SKEE C++ iface missing.
@@ -126,7 +131,7 @@ Function SetNaturalRatio(float afRatio) global native
 float Function GetCurvyRatio() global native
 Function SetCurvyRatio(float afRatio) global native
 
-; Base-body preference: 0 = Auto-detect, 1 = CBBE (3BA), 2 = BHUNP. Gates which realism toggle the MCM shows.
+; Base-body preference: 0 = Auto-detect, 1 = CBBE (3BA), 2 = BHUNP. Selects the female BodyNet and MCM realism toggle.
 int Function GetBaseBodyPref() global native
 Function SetBaseBodyPref(int aiPref) global native
 ; Resolved base body (pref if set, else auto-detected): 0 = unknown/ambiguous, 1 = CBBE, 2 = BHUNP.
@@ -213,3 +218,13 @@ Actor Function GetVRLookTarget() global native
 Function RegenerateActor(Actor akActor) global native
 Function MarkMorphsApplied(Actor akActor) global native
 bool Function HasMorphsApplied(Actor akActor) global native
+
+; ── BodyNet: the learned body generator (bodynet_*.obwnet in SKSE\Plugins\OBodyNGWeight) ────────────
+; On = bodies come from the trained net instead of the procedural slider rules; the net's output still
+; passes through the same per-slider ceilings, so it can never break a mesh. Determinism is unchanged
+; (the noise is derived from the actor seed). Falls back to the procedural path per sex if that sex has
+; no model installed.
+bool Function GetNeuralBody() global native
+Function SetNeuralBody(bool abOn) global native
+; True if at least one model file loaded - the MCM greys the toggle out when none is installed.
+bool Function GetNeuralAvailable() global native

@@ -1,3 +1,36 @@
+Version 1.6.1
+
+- Improved stability around RaceMenu/SKEE morph initialization. OBW now verifies the BodyMorph interface,
+  the actor and its base before beginning a body application. If a required value is unavailable, that
+  application is skipped and the exact reason is written to OBodyNGWeight.log; the plugin remains active.
+- Fixed the unsafe fallback used by Procedural, Procedural Oriented and OBody Sim Weight when SKEE was not
+  ready. It previously called OBody's morph-reset routine, which can dereference OBody's unavailable
+  interface. OBW now leaves the actor untouched until a valid interface is available.
+- Queued applications now verify that the actor still has loaded 3D before changing morphs. This prevents
+  stale tasks from applying to NPCs that unloaded while waiting in the queue.
+- Hardened reroll and preset-export status messages for actors with no display name.
+
+Version 1.6.0
+
+Fixed a RaceMenu/SKEE crash during crowded-cell body distribution. OBody announces a morph apply before
+SKEE's asynchronous TRI rebuild has necessarily finished; OBW could immediately start another rebuild for
+the same NPC while the first was still using MorphFileCache (observed on a 3BA CrotchGap morph). Morph events
+are now debounced for five seconds of quiet and OBW submits at most one NPC rebuild per timer tick.
+
+New: "AI body generation" in the menu, under Generation. Instead of the built-in slider rules, bodies are built by a small generator trained on thousands of hand-made BodySlide presets, so proportions hold together more like something a person actually sculpted. It is off by default - turn it on and use "Reprocess all loaded NPCs" to see the change.
+
+Nothing you rely on changes: the same NPC still gets the same body from the same seed, OBW still picks the archetype and the weight, and every slider still passes the same safety limits, so a body can never come out broken. If the generator ever produced something out of range it is refused outright and that NPC falls back to the built-in rules.
+
+Your settings still drive it. Bias, Weight mode, Fantasy NPCs, Unusual bodies, Race coherence, Morph intensity and Clothed refit all work as before. "Natural women", "Curvy women", "Athletic women" and "Male build" work too - rather than nudging a finished body, the generator was taught what each of those looks like from the preset library, so asking for a curvy or an athletic body gives you one somebody would plausibly have sculpted. How MANY NPCs get them is unchanged: still your sliders.
+
+The rare eye-catching bodies are now built the way preset authors actually build a show-stopper - which sliders they push and which they deliberately leave alone - instead of an ordinary body scaled up. How often they show up is untouched; that is still the "Fantasy NPCs" slider.
+
+Women use separate F3BA and BHUNP generators, and men use a HIMBO generator. BHUNP is selected from the existing Base body setting; ambiguous female setups safely use F3BA. If a model is missing, that body falls back without affecting the others.
+
+Female weight conditioning was retrained against each preset's paired small/big endpoints. F3BA now reproduces 60% of the corpus's global weight response (up from 33%); BHUNP reaches 67% and passes the visible weight-effect gate that its earlier experimental model failed.
+
+"Unusual breasts" now works with AI body generation too. Its deterministic post-process changes only BreastGravity2 and BreastPerkiness, remains gated by generated breast size, and uses the same safety ceilings as the built-in path.
+
 Version 1.5.3
 
 - Fixed the exclude/export hotkeys doing nothing in VR (regression in 1.5.2). The native hotkey handler
