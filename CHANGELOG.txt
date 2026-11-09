@@ -1,3 +1,12 @@
+Version 1.6.2
+
+- Rebuilt against CommonLibSSE-NG v15 for Skyrim AE 1.7.104 and its Address Library format 5.
+  SE, AE and VR support remains enabled in the same DLL.
+- Updated crosshair targeting, HUD notifications and neck-tint access for the current CommonLib API.
+- On Steam Skyrim 1.7.104, install SKSE 2.3.1 and Address Library All in One (1.7.104.0) v13.
+  The game must see Data/SKSE/Plugins/versionlib-1-7-104-0.bin. No settings reset is needed.
+- Fixed the release archive so its FOMOD includes the Balanced, Realistic and Fantasy starting presets.
+
 Version 1.6.1
 
 - Improved stability around RaceMenu/SKEE morph initialization. OBW now verifies the BodyMorph interface,

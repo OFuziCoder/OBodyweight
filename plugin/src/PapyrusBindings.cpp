@@ -20,6 +20,14 @@ namespace {
 
 constexpr std::string_view kScript{ "OBW_Native" };
 
+// CommonLib v15 removed the convenience wrapper, but the game function remains available
+// through its SE/AE address-library IDs. Keep the HUD notices used by the hotkeys.
+void Notify(const char* message) {
+    using func_t = void(const char*, const char*, bool);
+    static REL::Relocation<func_t> notify{ RELOCATION_ID(52050, 52933) };
+    notify(message, nullptr, true);
+}
+
 bool HasMorphInterface(RE::StaticFunctionTag*) {
     return OBW::CheckMorphInterface("Papyrus morph preflight");
 }
@@ -805,8 +813,8 @@ private:
     static RE::Actor* PickTarget() {
         if (REL::Module::IsVR()) return GetVRLookTarget(nullptr);
         if (auto* pick = RE::CrosshairPickData::GetSingleton()) {
-            if (auto ptr = pick->targetActor.get(); ptr && ptr->As<RE::Actor>()) return ptr->As<RE::Actor>();
-            if (auto ptr = pick->target.get(); ptr && ptr->As<RE::Actor>())      return ptr->As<RE::Actor>();
+            if (auto ptr = pick->GetActiveTarget().get(); ptr && ptr->As<RE::Actor>())
+                return ptr->As<RE::Actor>();
         }
         return nullptr;
     }
@@ -826,12 +834,12 @@ private:
         // "OBW is changing my character on its own" reports. The player's body belongs to OBody's own
         // menu; OBW never writes to him, full stop.
         if (!a || a == RE::PlayerCharacter::GetSingleton()) {
-            RE::DebugNotification("OBW: aim at an NPC to re-roll (your own body is set through OBody's menu).");
+            Notify("OBW: aim at an NPC to re-roll (your own body is set through OBody's menu).");
             return;
         }
         if (OBW::g_debugLog) {
             const std::string msg = std::string("Regenerating body: ") + DisplayNameOrUnknown(a);
-            RE::DebugNotification(msg.c_str());
+            Notify(msg.c_str());
         }
         WeightManager::GetSingleton().RegenerateActor(a);
         ArmDrain();
@@ -868,7 +876,7 @@ private:
             OBW::g_morph->VisitMorphValues(actor, col);
             if (col.out.empty()) {
                 std::string msg = std::string("OBW: no OBW body on ") + DisplayNameOrUnknown(actor) + " to export.";
-                RE::DebugNotification(msg.c_str());
+                Notify(msg.c_str());
                 return;
             }
             std::sort(col.out.begin(), col.out.end());
@@ -897,7 +905,7 @@ private:
 
             std::ofstream out(file, std::ios::trunc);
             if (!out) {
-                RE::DebugNotification("OBW: export FAILED (could not write the preset file).");
+                Notify("OBW: export FAILED (could not write the preset file).");
                 SKSE::log::error("Export: cannot open '{}'", file.string());
                 return;
             }
@@ -921,7 +929,7 @@ private:
             out.close();
 
             std::string msg = std::string("OBW: exported '") + preset + "' to BodySlide presets.";
-            RE::DebugNotification(msg.c_str());
+            Notify(msg.c_str());
             SKSE::log::info("Export: wrote {} sliders to '{}'", col.out.size(), file.string());
         });
     }
@@ -929,13 +937,13 @@ private:
     static void HandleExclude() {
         RE::Actor* a = PickTarget();
         if (!a || a == RE::PlayerCharacter::GetSingleton()) {
-            RE::DebugNotification("OBW: aim at an NPC to exclude or include it.");
+            Notify("OBW: aim at an NPC to exclude or include it.");
             return;
         }
         const bool nowExcl = !Config::IsActorExcluded(a);
         if (!Config::SetActorExcluded(a, nowExcl)) {
             // Fully runtime-spawned NPC (dynamic base AND reference): no durable FormID to persist.
-            RE::DebugNotification("OBW: this NPC is dynamically spawned and can't be excluded by ID - exclude its source mod in the MCM instead.");
+            Notify("OBW: this NPC is dynamically spawned and can't be excluded by ID - exclude its source mod in the MCM instead.");
             return;
         }
         std::string msg = DisplayNameOrUnknown(a);
@@ -946,7 +954,7 @@ private:
             WeightManager::GetSingleton().RegenerateActor(a);
             ArmDrain();
         }
-        RE::DebugNotification(msg.c_str());
+        Notify(msg.c_str());
     }
 };
 

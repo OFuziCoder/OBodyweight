@@ -62,8 +62,10 @@ fall back safely. Unusual breasts remains effective through a deterministic sag/
 
 ## Requirements
 
-- Skyrim SE/AE + **SKSE64**
-- **Address Library for SKSE Plugins**
+- Skyrim SE/AE + **SKSE64** matching the installed Skyrim executable (Steam 1.7.104.0: SKSE 2.3.1)
+- **Address Library for SKSE Plugins** matching the installed Skyrim executable (Steam 1.7.104.0:
+  All in One (1.7.104.0) v13; check `Data/SKSE/Plugins/versionlib-1-7-104-0.bin` in your mod
+  manager's effective Data tree)
 - **OBody NG** (hard requirement — master of the plugin)
 - **RaceMenu / SKEE** (NiOverride body morphs)
 - **SkyUI** (MCM)
@@ -131,6 +133,6 @@ they only run when OBW is installed.
 
 - **OBody NG** — Aietos (original **OBody** by Sinhime)
 - **RaceMenu / SKEE** — Expired · **SKSE64** — ianpatt, behippo, purplelunchbox
-- **Address Library** — meh321 · **CommonLibSSE-NG** — CharmedBaryon (orig. Ryan-rsm-McKenzie)
+- **Address Library** — meh321 · **CommonLibSSE-NG** — alandtse and contributors (orig. Ryan-rsm-McKenzie)
 - **SkyUI** — SkyUI Team · **CBBE / 3BA** — Ousnius & Caliente, Acro748 · **HIMBO** — Shino
 - **BodySlide** — Ousnius & Caliente · **spdlog** — gabime

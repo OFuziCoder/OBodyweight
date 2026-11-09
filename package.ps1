@@ -16,6 +16,11 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $pkg  = Join-Path $root "dist\pkg"
 $core = Join-Path $pkg "Core"
+$rootFull = [IO.Path]::GetFullPath($root).TrimEnd('\')
+$pkgFull = [IO.Path]::GetFullPath($pkg)
+if (-not $pkgFull.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    throw "package staging escaped the mod folder: $pkgFull"
+}
 
 if (-not $Version) {
     $m = Select-String -Path (Join-Path $root "plugin\CMakeLists.txt") -Pattern 'project\(OBodyNGWeight VERSION ([\d.]+)'
@@ -50,7 +55,7 @@ $files = @(
     @{ src = "Scripts\Source\User\OBW_Quest.psc";                  dst = "Scripts\Source\User" }
 )
 
-if (Test-Path $core) { Remove-Item $core -Recurse -Force }
+if (Test-Path $pkgFull) { Remove-Item -LiteralPath $pkgFull -Recurse -Force }
 foreach ($f in $files) {
     $s = Join-Path $root $f.src
     if (-not (Test-Path $s)) { throw "MISSING: $($f.src) - build first (build.ps1 / cmake) before packaging" }
@@ -78,6 +83,21 @@ foreach ($k in $releaseDefaults.Keys) {
 # Written as bytes with CRLF: the Win32 profile API that reads this file needs CRLF, and a plain
 # Set-Content here has silently converted the whole INI to LF before.
 [IO.File]::WriteAllText($iniPath, ($ini -replace "`r`n", "`n" -replace "`n", "`r`n"), (New-Object Text.UTF8Encoding $false))
+
+# Every FOMOD option must point to a real folder in the archive. Build the three
+# starting INIs from the release INI so future defaults stay in sync.
+foreach ($preset in @(
+    @{ name = "Balanced";  scale = "1.0";  fantasy = "0.15" },
+    @{ name = "Realistic"; scale = "0.95"; fantasy = "0.0" },
+    @{ name = "Fantasy";   scale = "1.2";  fantasy = "0.4" }
+)) {
+    $dir = Join-Path $pkg "Presets\$($preset.name)\SKSE\Plugins"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $presetIni = $ini -replace '(?m)^MorphScale=.*$', "MorphScale=$($preset.scale)"
+    $presetIni = $presetIni -replace '(?m)^FantasyRatio=.*$', "FantasyRatio=$($preset.fantasy)"
+    [IO.File]::WriteAllText((Join-Path $dir "OBodyNGWeight.ini"),
+        ($presetIni -replace "`r`n", "`n" -replace "`n", "`r`n"), (New-Object Text.UTF8Encoding $false))
+}
 
 # Staleness guard: a .pex older than its .psc means the scripts were edited and never recompiled - the
 # exact failure that shipped an MCM option with no Papyrus behind it once already.

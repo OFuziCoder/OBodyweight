@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(OBodyNGWeight VERSION 1.6.1 LANGUAGES CXX)
+project(OBodyNGWeight VERSION 1.6.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,8 +41,8 @@ set(RAPIDCSV_INCLUDE_DIRS "${rapidcsv_SOURCE_DIR}/src" CACHE PATH "" FORCE)
 # ── CommonLibSSE-NG ────────────────────────────────────────────────────────────
 FetchContent_Declare(
     CommonLibSSE
-    GIT_REPOSITORY https://github.com/CharmedBaryon/CommonLibSSE-NG.git
-    GIT_TAG        main
+    GIT_REPOSITORY https://github.com/alandtse/CommonLibSSE-NG.git
+    GIT_TAG        v15.0.0
     GIT_SHALLOW    TRUE
 )
 set(BUILD_TESTS        OFF CACHE BOOL "" FORCE)
@@ -74,11 +74,14 @@ target_precompile_headers(${PROJECT_NAME}
 )
 
 # ── Copy DLL to Data/SKSE/Plugins ────────────────────────────────────────────
-set(OUTPUT_DIR "${CMAKE_SOURCE_DIR}/../SKSE/Plugins")
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTPUT_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "$<TARGET_FILE:${PROJECT_NAME}>"
-        "${OUTPUT_DIR}/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
-    COMMENT "Installing OBodyNGWeight.dll into SKSE/Plugins"
-)
+option(OBW_COPY_TO_MOD "Copy a successful DLL build into the live mod folder" ON)
+if(OBW_COPY_TO_MOD)
+    set(OUTPUT_DIR "${CMAKE_SOURCE_DIR}/../SKSE/Plugins")
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTPUT_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:${PROJECT_NAME}>"
+            "${OUTPUT_DIR}/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
+        COMMENT "Installing OBodyNGWeight.dll into SKSE/Plugins"
+    )
+endif()

@@ -116,7 +116,7 @@ void WeightManager::ApplyNeckColor(RE::Actor* a_actor) {
     const float k = t > 1.0f ? 1.0f : t;
     int touched = 0;
     RE::BSVisit::TraverseScenegraphGeometries(faceNode, [&](RE::BSGeometry* a_geom) -> RE::BSVisit::BSVisitControl {
-        auto* prop = a_geom->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect].get();
+        auto* prop = a_geom->GetGeometryRuntimeData().shaderProperty.get();
         auto* lp   = netimmerse_cast<RE::BSLightingShaderProperty*>(prop);
         if (!lp || !lp->material) return RE::BSVisit::BSVisitControl::kContinue;
         if (lp->material->GetFeature() != RE::BSShaderMaterial::Feature::kFaceGenRGBTint)

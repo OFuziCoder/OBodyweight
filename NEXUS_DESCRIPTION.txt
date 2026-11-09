@@ -98,8 +98,8 @@ Make sure your CBBE / 3BA (female) and HIMBO (male) bodies are built in BodySlid
 REQUIREMENTS
 ==================================================================
 [list]
-[*]SKSE64
-[*]Address Library for SKSE Plugins
+[*]SKSE64 matching your game executable (Steam Skyrim 1.7.104.0: SKSE 2.3.1)
+[*]Address Library for SKSE Plugins matching your game executable (Steam 1.7.104.0: All in One (1.7.104.0) v13). Check that Data/SKSE/Plugins/versionlib-1-7-104-0.bin is visible in your mod manager's effective Data tree.
 [*][b]OBody NG[/b] (required)
 [*]RaceMenu
 [*]SkyUI (for the settings menu)
