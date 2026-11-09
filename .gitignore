@@ -27,6 +27,14 @@ desktop.ini
 # Local release staging + archives (releases go to Nexus/GitHub Releases, not the repo)
 dist/
 
+# Local Skyrim 1.7 migration audits contain this installation's mod inventory.
+# Keep the public compatibility note (docs/SKYRIM_1_7_COMPAT.md) tracked.
+docs/SKYRIM_1_7_104_UPDATE_AUDIT_2026-11-04.md
+docs/SKYRIM_1_7_INCOMPATIBLE_DLLS.csv
+docs/SKYRIM_1_7_MOD_AUDIT.md
+docs/SKYRIM_1_7_NEXUS_FILE_AUDIT.json
+docs/SKYRIM_1_7_SKSE_INVENTORY.csv
+
 # Editor workspace config (environment-specific)
 .vscode/
 
