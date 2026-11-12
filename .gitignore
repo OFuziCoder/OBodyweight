@@ -12,6 +12,9 @@ CMakeUserPresets.json
 build.ps1
 make_*.py
 
+# Internal planning document — local only, never publish.
+/OBODY_INTEGRATION.md
+
 # Distribution simulator + abandoned config experiments (dev only, not part of the mod)
 plugin/sim/
 _disabled_cbpc_configs/
